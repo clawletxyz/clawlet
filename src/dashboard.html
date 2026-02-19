@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clawlet Dashboard</title>
+<style>
+  :root {
+    --bg: #1B1B2F;
+    --bg-surface: #252542;
+    --bg-card: #2E2E50;
+    --bg-card-hover: #36365E;
+    --bg-input: #1B1B2F;
+    --border: #3D3D66;
+    --border-focus: #AB9FF2;
+    --text-primary: #F0ECF9;
+    --text-secondary: #9B95B0;
+    --text-muted: #6B6580;
+    --accent: #AB9FF2;
+    --accent-light: #C4BBFA;
+    --accent-dim: #7B6FCC;
+    --accent-bg: rgba(171, 159, 242, 0.12);
+    --success: #4ADE80;
+    --success-bg: rgba(74, 222, 128, 0.12);
+    --danger: #F87171;
+    --danger-bg: rgba(248, 113, 113, 0.12);
+    --warning: #FBBF24;
+    --warning-bg: rgba(251, 191, 36, 0.12);
+    --radius: 12px;
+    --radius-sm: 8px;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text-primary);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .container {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 32px 24px;
+  }
+
+  /* ── Header ──────────────────────────────────── */
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 32px;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .logo-icon {
+    width: 36px;
+    height: 36px;
+    background: var(--accent);
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+  }
+
+  .logo h1 {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .logo span {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 400;
+  }
+
+  .header-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  /* ── Buttons ─────────────────────────────────── */
+
+  .btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-family: var(--font);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .btn-accent {
+    background: var(--accent);
+    color: #1B1B2F;
+  }
+  .btn-accent:hover { background: var(--accent-light); }
+
+  .btn-danger {
+    background: var(--danger-bg);
+    color: var(--danger);
+    border: 1px solid rgba(248, 113, 113, 0.2);
+  }
+  .btn-danger:hover { background: rgba(248, 113, 113, 0.2); }
+
+  .btn-success {
+    background: var(--success-bg);
+    color: var(--success);
+    border: 1px solid rgba(74, 222, 128, 0.2);
+  }
+  .btn-success:hover { background: rgba(74, 222, 128, 0.2); }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+  }
+  .btn-ghost:hover { border-color: var(--text-secondary); color: var(--text-primary); }
+
+  .btn-sm { padding: 5px 10px; font-size: 12px; }
+
+  /* ── Cards ───────────────────────────────────── */
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    transition: border-color 0.15s;
+  }
+  .card:hover { border-color: var(--accent-dim); }
+
+  .card-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+  }
+
+  .card-value {
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--text-primary);
+    font-family: var(--mono);
+  }
+
+  .card-value.small {
+    font-size: 14px;
+    word-break: break-all;
+  }
+
+  .card-sub {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+  }
+
+  /* ── Badges ──────────────────────────────────── */
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+
+  .badge-active {
+    background: var(--success-bg);
+    color: var(--success);
+  }
+
+  .badge-frozen {
+    background: var(--danger-bg);
+    color: var(--danger);
+  }
+
+  .badge-settled {
+    background: var(--success-bg);
+    color: var(--success);
+  }
+
+  .badge-pending {
+    background: var(--warning-bg);
+    color: var(--warning);
+  }
+
+  .badge-failed {
+    background: var(--danger-bg);
+    color: var(--danger);
+  }
+
+  .badge-adapter {
+    background: var(--accent-bg);
+    color: var(--accent);
+  }
+
+  /* ── Sections ────────────────────────────────── */
+
+  .section {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 24px;
+    overflow: hidden;
+  }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .section-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .section-body { padding: 20px; }
+
+  /* ── Rules Form ──────────────────────────────── */
+
+  .rules-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .field label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+
+  .field input, .field textarea {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px;
+    color: var(--text-primary);
+    font-family: var(--mono);
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  .field input:focus, .field textarea:focus {
+    border-color: var(--border-focus);
+  }
+
+  .field input::placeholder, .field textarea::placeholder {
+    color: var(--text-muted);
+  }
+
+  .field textarea { resize: vertical; min-height: 36px; }
+
+  .field-full { grid-column: 1 / -1; }
+
+  .rules-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 16px;
+    gap: 8px;
+  }
+
+  /* ── Transactions Table ──────────────────────── */
+
+  .table-wrap { overflow-x: auto; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  thead th {
+    text-align: left;
+    padding: 10px 16px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  tbody td {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+
+  tbody tr:last-child td { border-bottom: none; }
+
+  tbody tr:hover { background: var(--bg-card-hover); }
+
+  td.amount {
+    font-family: var(--mono);
+    color: var(--text-primary);
+    font-weight: 500;
+  }
+
+  td.hash {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent);
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+
+  /* ── Toast ───────────────────────────────────── */
+
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 12px 20px;
+    font-size: 13px;
+    color: var(--text-primary);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    transform: translateY(100px);
+    opacity: 0;
+    transition: all 0.3s;
+    z-index: 100;
+  }
+  .toast.show { transform: translateY(0); opacity: 1; }
+  .toast.error { border-color: var(--danger); color: var(--danger); }
+  .toast.success { border-color: var(--success); color: var(--success); }
+
+  /* ── No wallet state ─────────────────────────── */
+
+  .no-wallet {
+    text-align: center;
+    padding: 80px 20px;
+  }
+
+  .no-wallet h2 {
+    font-size: 18px;
+    margin-bottom: 8px;
+    color: var(--text-primary);
+  }
+
+  .no-wallet p {
+    color: var(--text-secondary);
+    font-size: 14px;
+    margin-bottom: 4px;
+  }
+
+  .no-wallet code {
+    font-family: var(--mono);
+    font-size: 13px;
+    background: var(--accent-bg);
+    color: var(--accent);
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+
+  /* ── Responsive ──────────────────────────────── */
+
+  @media (max-width: 700px) {
+    .cards { grid-template-columns: 1fr; }
+    .rules-grid { grid-template-columns: 1fr; }
+    header { flex-direction: column; gap: 16px; align-items: flex-start; }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <div class="logo">
+      <div class="logo-icon">C</div>
+      <div>
+        <h1>Clawlet <span>Dashboard</span></h1>
+      </div>
+    </div>
+    <div class="header-actions" id="header-actions"></div>
+  </header>
+
+  <div id="app"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = '';
+
+async function api(path, opts = {}) {
+  const res = await fetch(API + path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Request failed');
+  return data;
+}
+
+function toast(msg, type = 'success') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast show ' + type;
+  setTimeout(() => el.className = 'toast', 3000);
+}
+
+function truncate(str, len = 10) {
+  if (!str || str.length <= len * 2 + 2) return str || '—';
+  return str.slice(0, len) + '...' + str.slice(-len);
+}
+
+function timeFmt(iso) {
+  const d = new Date(iso);
+  return d.toLocaleString(undefined, {
+    month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+}
+
+// ── State ─────────────────────────────────────
+
+let wallet = null;
+let adapterType = null;
+let balance = '—';
+let rules = null;
+let transactions = [];
+let todaySpent = '0.0';
+
+// ── Render ────────────────────────────────────
+
+function render() {
+  const app = document.getElementById('app');
+  const actions = document.getElementById('header-actions');
+
+  if (!wallet) {
+    actions.innerHTML = '';
+    app.innerHTML = `
+      <div class="no-wallet">
+        <h2>No wallet configured</h2>
+        <p>Create a wallet via the MCP server to get started.</p>
+        <p style="margin-top:12px"><code>create_wallet</code></p>
+      </div>`;
+    return;
+  }
+
+  // Header actions
+  actions.innerHTML = wallet.frozen
+    ? `<button class="btn btn-success btn-sm" onclick="doUnfreeze()">Unfreeze</button>`
+    : `<button class="btn btn-danger btn-sm" onclick="doFreeze()">Freeze Wallet</button>`;
+
+  // Cards
+  const frozenBadge = wallet.frozen
+    ? '<span class="badge badge-frozen">Frozen</span>'
+    : '<span class="badge badge-active">Active</span>';
+
+  const adapterBadge = adapterType
+    ? `<span class="badge badge-adapter">${adapterType}</span>`
+    : '';
+
+  app.innerHTML = `
+    <div class="cards">
+      <div class="card">
+        <div class="card-label">Wallet</div>
+        <div class="card-value small">${truncate(wallet.address, 8)}</div>
+        <div class="card-sub">${frozenBadge} ${adapterBadge}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Balance</div>
+        <div class="card-value">${balance}</div>
+        <div class="card-sub">USDC</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Spent Today</div>
+        <div class="card-value">${todaySpent}</div>
+        <div class="card-sub">USDC${rules && rules.dailyCap ? ' / ' + rules.dailyCap + ' cap' : ''}</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">Spending Rules</span>
+      </div>
+      <div class="section-body">
+        <div class="rules-grid">
+          <div class="field">
+            <label>Max per transaction (USDC)</label>
+            <input id="r-max" type="text" placeholder="No limit"
+              value="${rules?.maxPerTransaction || ''}">
+          </div>
+          <div class="field">
+            <label>Daily cap (USDC)</label>
+            <input id="r-cap" type="text" placeholder="No limit"
+              value="${rules?.dailyCap || ''}">
+          </div>
+          <div class="field">
+            <label>Allowed services (comma-separated)</label>
+            <input id="r-allow" type="text" placeholder="All services allowed"
+              value="${(rules?.allowedServices || []).join(', ')}">
+          </div>
+          <div class="field">
+            <label>Blocked services (comma-separated)</label>
+            <input id="r-block" type="text" placeholder="None blocked"
+              value="${(rules?.blockedServices || []).join(', ')}">
+          </div>
+        </div>
+        <div class="rules-actions">
+          <button class="btn btn-accent btn-sm" onclick="saveRules()">Save Rules</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <span class="section-title">Transactions</span>
+        <button class="btn btn-ghost btn-sm" onclick="refresh()">Refresh</button>
+      </div>
+      ${transactions.length === 0
+        ? '<div class="empty-state">No transactions yet</div>'
+        : `<div class="table-wrap"><table>
+            <thead><tr>
+              <th>Time</th>
+              <th>Service</th>
+              <th>Amount</th>
+              <th>Status</th>
+              <th>Tx Hash</th>
+            </tr></thead>
+            <tbody>${transactions.map(tx => `
+              <tr>
+                <td>${timeFmt(tx.timestamp)}</td>
+                <td>${tx.service}</td>
+                <td class="amount">${tx.amount} USDC</td>
+                <td><span class="badge badge-${tx.status}">${tx.status}</span></td>
+                <td class="hash">${tx.txHash ? truncate(tx.txHash, 6) : '—'}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table></div>`
+      }
+    </div>`;
+}
+
+// ── Actions ───────────────────────────────────
+
+async function doFreeze() {
+  try {
+    await api('/api/freeze', { method: 'POST' });
+    wallet.frozen = true;
+    render();
+    toast('Wallet frozen');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function doUnfreeze() {
+  try {
+    await api('/api/unfreeze', { method: 'POST' });
+    wallet.frozen = false;
+    render();
+    toast('Wallet unfrozen');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function saveRules() {
+  const parse = v => v.trim() ? v.trim().split(/\s*,\s*/).filter(Boolean) : [];
+  const body = {
+    maxPerTransaction: document.getElementById('r-max').value.trim() || null,
+    dailyCap: document.getElementById('r-cap').value.trim() || null,
+    allowedServices: parse(document.getElementById('r-allow').value),
+    blockedServices: parse(document.getElementById('r-block').value),
+  };
+  try {
+    rules = await api('/api/rules', { method: 'PUT', body: JSON.stringify(body) });
+    render();
+    toast('Rules saved');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+// ── Data Loading ──────────────────────────────
+
+async function loadWallet() {
+  try {
+    const data = await api('/api/wallet');
+    wallet = data.wallet;
+    adapterType = data.adapter;
+  } catch { wallet = null; }
+}
+
+async function loadBalance() {
+  try {
+    const data = await api('/api/balance');
+    balance = data.balance;
+  } catch { balance = '—'; }
+}
+
+async function loadRules() {
+  try { rules = await api('/api/rules'); } catch {}
+}
+
+async function loadTransactions() {
+  try {
+    const data = await api('/api/transactions?limit=50');
+    transactions = data.transactions || [];
+  } catch {}
+}
+
+async function loadTodaySpent() {
+  try {
+    const data = await api('/api/today-spent');
+    todaySpent = data.spent;
+  } catch {}
+}
+
+async function refresh() {
+  await Promise.all([
+    loadWallet(),
+    loadBalance(),
+    loadRules(),
+    loadTransactions(),
+    loadTodaySpent(),
+  ]);
+  render();
+}
+
+// ── Boot ──────────────────────────────────────
+
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>

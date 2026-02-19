@@ -1,0 +1,74 @@
+{
+  "name": "clawlet",
+  "version": "0.0.1",
+  "description": "Wallet-agnostic USDC governance layer for AI agents — MCP server + SDK for x402 payments across any wallet provider",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "clawlet": "dist/index.js",
+    "clawlet-dashboard": "dist/api.js"
+  },
+  "files": [
+    "dist/",
+    "dashboard/dist/",
+    "src/dashboard.html",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc && cp src/dashboard.html dist/ && cd dashboard && npm install && npm run build",
+    "build:core": "tsc",
+    "build:dashboard": "cd dashboard && npm install && npm run build",
+    "build:demo": "tsc -p demo/tsconfig.json",
+    "build:all": "npm run build && npm run build:demo",
+    "prepublishOnly": "npm run build",
+    "start": "node dist/index.js",
+    "dashboard": "node dist/api.js",
+    "dev": "concurrently -n api,ui -c blue,magenta \"tsx src/api.ts\" \"cd dashboard && npx vite\"",
+    "dev:api": "tsx src/api.ts",
+    "demo": "concurrently -n api,ui,x402 -c blue,magenta,cyan \"tsx src/api.ts\" \"cd dashboard && npx vite\" \"tsx demo/server.ts\"",
+    "demo:seed": "tsx demo/seed.ts",
+    "demo:server": "tsx demo/server.ts"
+  },
+  "keywords": [
+    "ai-agent",
+    "wallet",
+    "x402",
+    "mcp",
+    "usdc",
+    "base",
+    "erc-3009",
+    "agent-economy"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/clawletxyz/clawlet.git"
+  },
+  "homepage": "https://github.com/clawletxyz/clawlet",
+  "bugs": {
+    "url": "https://github.com/clawletxyz/clawlet/issues"
+  },
+  "author": "clawletxyz",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@coinbase/coinbase-sdk": "^0.25.0",
+    "@crossmint/wallets-sdk": "^0.19.0",
+    "@hono/node-server": "^1.19.9",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@privy-io/server-auth": "^1.32.5",
+    "dotenv": "^17.3.1",
+    "hono": "^4.12.0",
+    "viem": "^2.23.2",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "concurrently": "^9.2.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.3"
+  }
+}
