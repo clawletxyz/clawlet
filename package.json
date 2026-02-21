@@ -1,18 +1,16 @@
 {
   "name": "clawlet",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Wallet-agnostic USDC governance layer for AI agents — MCP server + SDK for x402 payments across any wallet provider",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "clawlet": "dist/index.js",
-    "clawlet-dashboard": "dist/api.js"
+    "clawlet": "dist/cli.js"
   },
   "files": [
     "dist/",
     "dashboard/dist/",
-    "src/dashboard.html",
     "README.md",
     "LICENSE"
   ],

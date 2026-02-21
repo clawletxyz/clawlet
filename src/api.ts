@@ -335,12 +335,14 @@ app.notFound((c) => {
 
 // ── Server ───────────────────────────────────────────────────
 
-export async function main() {
+export async function main(options?: { silent?: boolean }) {
   initStore();
   const port = parseInt(process.env.PORT ?? "3000", 10);
   serve({ fetch: app.fetch, port }, (info) => {
-    console.log(`\n  Clawlet Dashboard`);
-    console.log(`  http://localhost:${info.port}\n`);
+    if (!options?.silent) {
+      console.log(`\n  Clawlet Dashboard`);
+      console.log(`  http://localhost:${info.port}\n`);
+    }
   });
 }
 

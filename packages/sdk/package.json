@@ -1,0 +1,51 @@
+{
+  "name": "@clawlet/sdk",
+  "version": "0.0.1",
+  "description": "Agent SDK for Clawlet — x402 payments, spending rules, and wallet controls for AI agents",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./tools": {
+      "types": "./dist/tools.d.ts",
+      "import": "./dist/tools.js"
+    }
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "clawlet",
+    "x402",
+    "ai-agent",
+    "agent-skill",
+    "mcp",
+    "usdc",
+    "wallet",
+    "spending-controls"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/clawletxyz/clawlet.git",
+    "directory": "packages/sdk"
+  },
+  "homepage": "https://github.com/clawletxyz/clawlet/tree/main/packages/sdk",
+  "author": "clawletxyz",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}
