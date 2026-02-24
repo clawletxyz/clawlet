@@ -16,6 +16,8 @@ export interface SpendingRules {
   maxPerTransaction: string | null;
   /** Max USDC spend per calendar day */
   dailyCap: string | null;
+  /** Payments above this USDC amount require human approval */
+  requireApprovalAbove: string | null;
   /** If set, only these domains/addresses can be paid */
   allowedServices: string[];
   /** If set, these domains/addresses are always blocked (checked before allowlist) */
@@ -25,9 +27,19 @@ export interface SpendingRules {
 export const DEFAULT_RULES: SpendingRules = {
   maxPerTransaction: null,
   dailyCap: null,
+  requireApprovalAbove: null,
   allowedServices: [],
   blockedServices: [],
 };
+
+// ── Rule Evaluation ────────────────────────────────────────────────
+
+export type RuleDecisionType = "allow" | "block" | "pending_approval";
+
+export interface RuleDecision {
+  decision: RuleDecisionType;
+  reason: string;
+}
 
 // ── Transaction Ledger ──────────────────────────────────────────────
 
@@ -40,8 +52,12 @@ export interface TransactionRecord {
   asset: string;
   network: string;
   txHash: string | null;
-  status: "pending" | "settled" | "failed";
+  status: "pending" | "settling" | "settled" | "failed";
   reason: string;
+  idempotencyKey?: string;
+  confirmations?: number;
+  confirmedAt?: string | null;
+  settlementFlags?: Record<string, boolean>;
 }
 
 // ── Agent Identity (ERC-8004) ────────────────────────────────────────
@@ -70,6 +86,8 @@ export interface WalletEntry {
   transactions: TransactionRecord[];
   /** Optional ERC-8004 agent identity bound to this wallet */
   agentIdentity?: AgentIdentity;
+  /** Arbitrary key-value tags for categorization */
+  tags?: Record<string, string>;
 }
 
 // ── Network ─────────────────────────────────────────────────────────
@@ -119,19 +137,9 @@ export interface ExactEvmPayload {
   };
 }
 
-// ── Persisted State (v2 — multi-wallet) ─────────────────────────────
+// ── Persisted State ─────────────────────────────────────────────────
 
 export interface ClawletState {
   wallets: WalletEntry[];
-  activeWalletId: string | null;
   network: NetworkId;
-}
-
-// ── Legacy State (v1 — single-wallet, for migration) ───────────────
-
-export interface LegacyClawletState {
-  adapterConfig: AdapterConfig | null;
-  wallet: WalletInfo | null;
-  rules: SpendingRules;
-  transactions: TransactionRecord[];
 }

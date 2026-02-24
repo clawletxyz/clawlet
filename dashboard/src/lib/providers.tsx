@@ -1,4 +1,4 @@
-import { Key, Layers } from "lucide-react";
+import { Key } from "lucide-react";
 
 export interface ProviderMeta {
   name: string;
@@ -9,9 +9,7 @@ export interface ProviderMeta {
 const PROVIDER_META: Record<string, ProviderMeta> = {
   "local-key": { name: "Self-Custodial", icon: Key },
   browser: { name: "MetaMask", logo: "/providers/metamask.png" },
-  privy: { name: "Privy", logo: "/providers/privy.svg" },
   "coinbase-cdp": { name: "Coinbase CDP", logo: "/providers/coinbase.svg" },
-  crossmint: { name: "Crossmint", icon: Layers },
 };
 
 export function getProviderMeta(adapter: string): ProviderMeta {

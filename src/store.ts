@@ -1,98 +1,54 @@
-import { randomBytes } from "node:crypto";
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
-import { join } from "node:path";
-import { DEFAULT_DATA_DIR, STATE_FILE } from "./constants.js";
-import { DEFAULT_RULES } from "./types.js";
-import type { ClawletState, LegacyClawletState, WalletEntry, NetworkId } from "./types.js";
+import { initDb, db } from "./db.js";
+import { toWalletEntry } from "./mappers.js";
+import type { ClawletState, WalletEntry, NetworkId } from "./types.js";
 
-let dataDir: string;
-let statePath: string;
-let state: ClawletState;
+/** In-memory cache for network so getNetworkCaip2 can stay sync. */
+let cachedNetwork: NetworkId = "base";
 
-/** Detect and migrate v1 (single-wallet) state to v2 (multi-wallet). */
-function migrateIfNeeded(raw: unknown): ClawletState {
-  const obj = raw as Record<string, unknown>;
+export async function initStore(baseDir?: string): Promise<void> {
+  await initDb(baseDir);
 
-  // Already v2 — has wallets array
-  if (Array.isArray(obj.wallets)) {
-    return obj as unknown as ClawletState;
-  }
+  const appState = await db().appState.findUnique({ where: { id: "singleton" } });
+  cachedNetwork = (appState?.network as NetworkId) ?? "base";
+}
 
-  // v1 — single-wallet format
-  const legacy = obj as unknown as LegacyClawletState;
-  const wallets: WalletEntry[] = [];
-
-  if (legacy.wallet && legacy.adapterConfig) {
-    const id = randomBytes(8).toString("hex");
-    wallets.push({
-      id,
-      label: "Wallet 1",
-      wallet: legacy.wallet,
-      adapterConfig: legacy.adapterConfig,
-      rules: legacy.rules ?? { ...DEFAULT_RULES },
-      transactions: legacy.transactions ?? [],
-    });
-  }
+export async function getState(): Promise<ClawletState> {
+  const appState = await db().appState.findUniqueOrThrow({ where: { id: "singleton" } });
+  const walletRows = await db().wallet.findMany({
+    include: { transactions: { orderBy: { timestamp: "asc" } } },
+  });
 
   return {
-    wallets,
-    activeWalletId: wallets[0]?.id ?? null,
-    network: "base" as NetworkId,
+    wallets: walletRows.map(toWalletEntry),
+    network: (appState.network as NetworkId) ?? "base",
   };
 }
 
-export function initStore(baseDir?: string): void {
-  dataDir = baseDir
-    ? join(baseDir, DEFAULT_DATA_DIR)
-    : join(process.cwd(), DEFAULT_DATA_DIR);
-  statePath = join(dataDir, STATE_FILE);
-
-  if (!existsSync(dataDir)) {
-    mkdirSync(dataDir, { recursive: true });
-  }
-
-  if (existsSync(statePath)) {
-    const raw = JSON.parse(readFileSync(statePath, "utf-8"));
-    state = migrateIfNeeded(raw);
-    persist(); // write back migrated format
-  } else {
-    state = {
-      wallets: [],
-      activeWalletId: null,
-      network: "base",
-    };
-    persist();
-  }
+/** Look up a wallet by ID. Throws if not found. */
+export async function getWalletById(walletId: string): Promise<WalletEntry> {
+  const row = await db().wallet.findUnique({
+    where: { id: walletId },
+    include: { transactions: { orderBy: { timestamp: "asc" } } },
+  });
+  if (!row) throw new Error(`Wallet ${walletId} not found`);
+  return toWalletEntry(row);
 }
 
-export function getState(): ClawletState {
-  return state;
+/** Resolve a wallet by explicit ID. */
+export async function resolveWalletEntry(walletId: string): Promise<WalletEntry> {
+  return getWalletById(walletId);
 }
 
-export function persist(): void {
-  writeFileSync(statePath, JSON.stringify(state, null, 2), "utf-8");
-}
-
-/** Get the active wallet entry, or null if none. */
-export function getActiveEntry(): WalletEntry | null {
-  if (!state.activeWalletId) return null;
-  return state.wallets.find((w) => w.id === state.activeWalletId) ?? null;
-}
-
-/** Get the active wallet entry, or throw. */
-export function requireActiveEntry(): WalletEntry {
-  const entry = getActiveEntry();
-  if (!entry) throw new Error("No active wallet. Create or switch to a wallet first.");
-  return entry;
-}
-
-/** Get the selected network CAIP-2 id. */
+/** Get the selected network CAIP-2 id (sync, uses cache). */
 export function getNetworkCaip2(): string {
-  return state.network === "base-sepolia" ? "eip155:84532" : "eip155:8453";
+  return cachedNetwork === "base-sepolia" ? "eip155:84532" : "eip155:8453";
 }
 
 /** Set the active network. */
-export function setNetwork(network: NetworkId): void {
-  state.network = network;
-  persist();
+export async function setNetwork(network: NetworkId): Promise<void> {
+  await db().appState.update({
+    where: { id: "singleton" },
+    data: { network },
+  });
+  cachedNetwork = network;
 }

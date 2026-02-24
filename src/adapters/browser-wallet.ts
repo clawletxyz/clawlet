@@ -11,6 +11,7 @@ import { getUsdcBalance } from "./evm-balance.js";
  */
 export class BrowserWalletAdapter implements WalletAdapter {
   readonly type = "browser" as const;
+  readonly canSignServerSide = false;
   private _address: Address | null;
 
   constructor(config?: BrowserWalletConfig) {

@@ -1,99 +1,67 @@
-import { parseUnits } from "viem";
-import { persist, requireActiveEntry } from "./store.js";
-import type { SpendingRules } from "./types.js";
+import { db } from "./db.js";
+import { resolveWalletEntry } from "./store.js";
+import { evaluatePolicy } from "./policy/index.js";
+import type { SpendingRules, RuleDecision } from "./types.js";
 
-/** Update spending rules on the active wallet (partial update). */
-export function setRules(patch: Partial<SpendingRules>): SpendingRules {
-  const entry = requireActiveEntry();
-  const rules = entry.rules;
-  if (patch.maxPerTransaction !== undefined) rules.maxPerTransaction = patch.maxPerTransaction;
-  if (patch.dailyCap !== undefined) rules.dailyCap = patch.dailyCap;
-  if (patch.allowedServices !== undefined) rules.allowedServices = patch.allowedServices;
-  if (patch.blockedServices !== undefined) rules.blockedServices = patch.blockedServices;
-  persist();
-  return rules;
+/** Update spending rules on a wallet (partial update). */
+export async function setRules(patch: Partial<SpendingRules>, walletId: string): Promise<SpendingRules> {
+  const entry = await resolveWalletEntry(walletId);
+
+  const data: Record<string, unknown> = {};
+  if (patch.maxPerTransaction !== undefined) data.maxPerTransaction = patch.maxPerTransaction;
+  if (patch.dailyCap !== undefined) data.dailyCap = patch.dailyCap;
+  if (patch.requireApprovalAbove !== undefined) data.requireApprovalAbove = patch.requireApprovalAbove;
+  if (patch.allowedServices !== undefined) data.allowedServices = JSON.stringify(patch.allowedServices);
+  if (patch.blockedServices !== undefined) data.blockedServices = JSON.stringify(patch.blockedServices);
+
+  const updated = await db().wallet.update({
+    where: { id: entry.id },
+    data,
+  });
+
+  return {
+    maxPerTransaction: updated.maxPerTransaction,
+    dailyCap: updated.dailyCap,
+    requireApprovalAbove: updated.requireApprovalAbove,
+    allowedServices: JSON.parse(updated.allowedServices) as string[],
+    blockedServices: JSON.parse(updated.blockedServices) as string[],
+  };
 }
 
-/** Get current spending rules for the active wallet. */
-export function getRules(): SpendingRules {
-  return requireActiveEntry().rules;
+/** Get current spending rules for a wallet. */
+export async function getRules(walletId: string): Promise<SpendingRules> {
+  const entry = await resolveWalletEntry(walletId);
+  return entry.rules;
 }
 
 /**
- * Enforce spending rules before a payment.
- * Throws an error string if the payment violates any rule.
+ * Evaluate spending rules for a payment.
+ * Thin wrapper over the pluggable policy engine — preserves the original API.
  */
-export function enforceRules(
+export async function evaluateRules(
   amountAtomic: string,
   service: string,
   decimals: number = 6,
-): void {
-  const entry = requireActiveEntry();
-  const rules = entry.rules;
-  const amount = BigInt(amountAtomic);
-
-  // Check per-transaction limit
-  if (rules.maxPerTransaction !== null) {
-    const max = parseUnits(rules.maxPerTransaction, decimals);
-    if (amount > max) {
-      throw new Error(
-        `Payment of ${formatAtomic(amount, decimals)} USDC exceeds per-transaction limit of ${rules.maxPerTransaction} USDC`,
-      );
-    }
-  }
-
-  // Check daily cap
-  if (rules.dailyCap !== null) {
-    const cap = parseUnits(rules.dailyCap, decimals);
-    const todaySpent = getTodaySpent(entry.transactions);
-    if (todaySpent + amount > cap) {
-      throw new Error(
-        `Payment would exceed daily cap of ${rules.dailyCap} USDC (already spent ${formatAtomic(todaySpent, decimals)} today)`,
-      );
-    }
-  }
-
-  // Check service blocklist (takes precedence over allowlist)
-  if (rules.blockedServices.length > 0) {
-    const normalized = service.toLowerCase();
-    const blocked = rules.blockedServices.some(
-      (s) => normalized.includes(s.toLowerCase()),
-    );
-    if (blocked) {
-      throw new Error(
-        `Service "${service}" is blocked. Blocked services: ${rules.blockedServices.join(", ")}`,
-      );
-    }
-  }
-
-  // Check service allowlist
-  if (rules.allowedServices.length > 0) {
-    const normalized = service.toLowerCase();
-    const allowed = rules.allowedServices.some(
-      (s) => normalized.includes(s.toLowerCase()),
-    );
-    if (!allowed) {
-      throw new Error(
-        `Service "${service}" is not in the allowed services list: ${rules.allowedServices.join(", ")}`,
-      );
-    }
-  }
+  walletId: string,
+): Promise<RuleDecision> {
+  const evaluation = await evaluatePolicy(amountAtomic, service, decimals, walletId);
+  return { decision: evaluation.decision.decision, reason: evaluation.decision.reason };
 }
 
-function getTodaySpent(transactions: { status: string; timestamp: string; amount: string }[]): bigint {
-  const today = new Date().toISOString().slice(0, 10);
-  let total = 0n;
-  for (const tx of transactions) {
-    if (tx.status === "settled" && tx.timestamp.startsWith(today)) {
-      total += parseUnits(tx.amount, 6);
-    }
+/**
+ * Enforce spending rules before a payment (legacy wrapper).
+ * Throws on block. Returns normally on allow.
+ * Does NOT handle pending_approval — callers that need approval support should use evaluateRules.
+ */
+export async function enforceRules(
+  amountAtomic: string,
+  service: string,
+  decimals: number = 6,
+  walletId: string,
+): Promise<void> {
+  const decision = await evaluateRules(amountAtomic, service, decimals, walletId);
+  if (decision.decision === "block") {
+    throw new Error(decision.reason);
   }
-  return total;
-}
-
-function formatAtomic(value: bigint, decimals: number): string {
-  const str = value.toString().padStart(decimals + 1, "0");
-  const whole = str.slice(0, str.length - decimals) || "0";
-  const frac = str.slice(str.length - decimals);
-  return `${whole}.${frac}`;
+  // pending_approval is treated as allow in legacy flow (for backwards compat with browser wallet flow)
 }

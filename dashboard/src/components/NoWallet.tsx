@@ -13,7 +13,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 
-type AdapterType = "local-key" | "privy" | "coinbase-cdp" | "crossmint" | "browser";
+type AdapterType = "local-key" | "coinbase-cdp" | "browser";
 type Step = 1 | 2 | 3;
 type CreationStatus = "idle" | "creating" | "success" | "error";
 
@@ -35,25 +35,17 @@ const PROVIDERS: {
 }[] = [
   { adapter: "local-key", description: "Generate a local key. No service needed.", badge: "Default" },
   { adapter: "browser", description: "Connect your browser wallet.", badge: "Browser" },
-  { adapter: "privy", description: "Managed wallet infrastructure." },
-  { adapter: "coinbase-cdp", description: "Coinbase Developer Platform wallets." },
-  { adapter: "crossmint", description: "Enterprise wallet-as-a-service." },
+  { adapter: "coinbase-cdp", description: "Coinbase CDP v2 — TEE-based key management." },
 ];
 
 const CREDENTIAL_FIELDS: Record<
   string,
   { key: string; label: string; placeholder: string }[]
 > = {
-  privy: [
-    { key: "appId", label: "App ID", placeholder: "Your Privy app ID" },
-    { key: "appSecret", label: "App Secret", placeholder: "Your Privy app secret" },
-  ],
   "coinbase-cdp": [
     { key: "apiKeyId", label: "API Key ID", placeholder: "Your CDP API key ID" },
     { key: "apiKeySecret", label: "API Key Secret", placeholder: "Your CDP API key secret" },
-  ],
-  crossmint: [
-    { key: "apiKey", label: "API Key", placeholder: "Your Crossmint API key" },
+    { key: "walletSecret", label: "Wallet Secret", placeholder: "Your CDP wallet secret" },
   ],
 };
 

@@ -7,9 +7,12 @@ import {
   CHAIN_IDS,
 } from "./constants.js";
 import { getWallet, getAdapter, getAgentIdentity } from "./wallet.js";
-import { getNetworkCaip2 } from "./store.js";
+import { getNetworkCaip2, resolveWalletEntry } from "./store.js";
+import { evaluatePolicy, checkAutoApprove, type PolicyEvaluation } from "./policy/index.js";
 import { enforceRules } from "./rules.js";
 import { addTransaction, updateTransaction } from "./ledger.js";
+import { db } from "./db.js";
+import { toPaymentSession } from "./mappers.js";
 import type {
   PaymentRequired,
   PaymentRequirements,
@@ -18,81 +21,67 @@ import type {
 } from "./types.js";
 import type { WalletAdapter } from "./adapters/types.js";
 
-// ── In-memory session store for browser wallet two-phase flow ────────
-
-interface PaymentSession {
-  id: string;
-  url: string;
-  method: string;
-  headers: Record<string, string>;
-  body?: string;
-  reason: string;
-  accepted: PaymentRequirements;
-  paymentRequired: PaymentRequired;
-  authorization: ExactEvmPayload["authorization"];
-  txRecordId: string;
-  expiresAt: number;
-}
-
-const paymentSessions = new Map<string, PaymentSession>();
+// ── Session cleanup (durable via DB) ─────────────────────────────────
 
 /** Remove expired sessions and mark their transactions as failed. */
-function cleanupSessions(): void {
+async function cleanupSessions(): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
-  for (const [id, session] of paymentSessions) {
-    if (now > session.expiresAt) {
-      updateTransaction(session.txRecordId, {
-        status: "failed",
-        reason: "Payment session expired",
-      });
-      paymentSessions.delete(id);
-    }
+  const expired = await db().paymentSession.findMany({
+    where: { expiresAt: { lt: now } },
+  });
+
+  for (const session of expired) {
+    await updateTransaction(session.txRecordId, {
+      status: "failed",
+      reason: "Payment session expired",
+    });
+  }
+
+  if (expired.length > 0) {
+    await db().paymentSession.deleteMany({
+      where: { expiresAt: { lt: now } },
+    });
   }
 }
 
 // Sweep expired sessions every 60 seconds
-setInterval(cleanupSessions, 60_000);
+setInterval(() => { cleanupSessions().catch(() => {}); }, 60_000);
 
 // ── Shared negotiate logic ───────────────────────────────────────────
 
-interface NegotiateResult {
+export interface NegotiateResult {
   accepted: PaymentRequirements;
   paymentRequired: PaymentRequired;
   service: string;
 }
 
+export type NegotiateOutcome =
+  | { type: "payment"; result: NegotiateResult; evaluation: PolicyEvaluation }
+  | { type: "passthrough"; response: { status: number; headers: Record<string, string>; body: string } };
+
 /**
- * Perform the initial 402 negotiation:
- * 1. Send initial request to URL
- * 2. Parse PAYMENT-REQUIRED header
- * 3. Find compatible payment option
- * 4. Network guard
- * 5. Enforce spending rules
- *
- * Returns null if the response is not 402 (caller should return the response directly).
+ * Perform the x402 negotiation: send initial request, parse 402 response,
+ * and evaluate spending rules. Returns the negotiation result with the
+ * rule decision (allow / block / pending_approval).
  */
-async function negotiate(
+export async function negotiate(
   url: string,
   options: {
     method?: string;
     headers?: Record<string, string>;
     body?: string;
   },
-): Promise<
-  | { type: "payment"; result: NegotiateResult }
-  | { type: "passthrough"; response: { status: number; headers: Record<string, string>; body: string } }
-> {
+  walletId: string,
+): Promise<NegotiateOutcome> {
   const method = options.method ?? "GET";
   const headers: Record<string, string> = { ...options.headers };
 
-  // Step 1: Initial request
   const initialResponse = await fetch(url, {
     method,
     headers,
     body: options.body,
   });
 
-  // Not a 402 — return as-is
   if (initialResponse.status !== 402) {
     const responseHeaders: Record<string, string> = {};
     initialResponse.headers.forEach((v, k) => {
@@ -108,7 +97,6 @@ async function negotiate(
     };
   }
 
-  // Step 2: Parse PAYMENT-REQUIRED header
   const paymentRequiredHeader =
     initialResponse.headers.get("payment-required") ??
     initialResponse.headers.get("PAYMENT-REQUIRED");
@@ -123,7 +111,6 @@ async function negotiate(
     paymentRequired = JSON.parse(body) as PaymentRequired;
   }
 
-  // Step 3: Find a compatible payment option
   const accepted = findAcceptedOption(paymentRequired.accepts);
   if (!accepted) {
     throw new Error(
@@ -131,7 +118,6 @@ async function negotiate(
     );
   }
 
-  // Step 4: Network guard
   const selectedNetwork = getNetworkCaip2();
   if (accepted.network !== selectedNetwork) {
     const isTestnet = selectedNetwork.includes("84532");
@@ -143,13 +129,16 @@ async function negotiate(
     );
   }
 
-  // Step 5: Enforce spending rules
   const service = new URL(url).hostname;
-  enforceRules(accepted.amount, service);
+  const evaluation = await evaluatePolicy(accepted.amount, service, 6, walletId, {
+    requestMethod: options.method,
+    requestUrl: url,
+  });
 
   return {
     type: "payment",
     result: { accepted, paymentRequired, service },
+    evaluation,
   };
 }
 
@@ -162,6 +151,7 @@ async function retryWithPayment(
   accepted: PaymentRequirements,
   payload: ExactEvmPayload,
   txRecordId: string,
+  walletId?: string,
 ): Promise<{
   status: number;
   headers: Record<string, string>;
@@ -180,7 +170,7 @@ async function retryWithPayment(
 
   const encoded = Buffer.from(JSON.stringify(paymentPayload)).toString("base64");
 
-  const agentIdentity = getAgentIdentity();
+  const agentIdentity = walletId ? await getAgentIdentity(walletId) : null;
 
   const retryHeaders: Record<string, string> = {
     ...headers,
@@ -208,7 +198,6 @@ async function retryWithPayment(
     responseHeaders[k] = v;
   });
 
-  // Extract payment receipt
   let txHash: string | null = null;
   const paymentResponseHeader =
     retryResponse.headers.get("payment-response") ??
@@ -227,11 +216,16 @@ async function retryWithPayment(
     }
   }
 
-  // Update transaction record
   if (retryResponse.ok) {
-    updateTransaction(txRecordId, { status: "settled", txHash: txHash ?? undefined });
+    const flags: Record<string, boolean> = {};
+    if (!txHash) flags.missingTxHash = true;
+    await updateTransaction(txRecordId, {
+      status: "settling",
+      txHash: txHash ?? undefined,
+      ...(Object.keys(flags).length > 0 ? { settlementFlags: flags } : {}),
+    });
   } else {
-    updateTransaction(txRecordId, { status: "failed" });
+    await updateTransaction(txRecordId, { status: "failed" });
   }
 
   return {
@@ -248,11 +242,6 @@ async function retryWithPayment(
 
 // ── Main x402Fetch (single-step, for server-side adapters) ───────────
 
-/**
- * Make an HTTP request to a URL, automatically handling x402 payment if required.
- * Works with adapters that can sign server-side (local-key, privy, coinbase-cdp, crossmint).
- * For browser wallets, use x402Prepare + x402Complete instead.
- */
 export async function x402Fetch(
   url: string,
   options: {
@@ -261,52 +250,129 @@ export async function x402Fetch(
     body?: string;
     reason?: string;
   } = {},
+  idempotencyKey?: string,
+  walletId?: string,
 ): Promise<{
   status: number;
   headers: Record<string, string>;
   body: string;
   payment?: { txHash: string | null; amount: string; to: Address };
+  pendingApproval?: { approvalId: string; reason: string; expiresAt: string };
 }> {
-  const wallet = getWallet();
+  if (!walletId) throw new Error("walletId is required for x402Fetch");
+  const wallet = await getWallet(walletId);
   if (wallet.frozen) {
     throw new Error("Wallet is frozen. Unfreeze it before making payments.");
   }
 
-  const adapter = getAdapter();
+  // Idempotency check: if key provided, look for existing transaction
+  if (idempotencyKey) {
+    const existing = await db().transaction.findUnique({
+      where: { idempotencyKey },
+    });
+    if (existing) {
+      if (existing.status === "settled" || existing.status === "settling") {
+        return {
+          status: 200,
+          headers: {},
+          body: `Payment already completed (idempotent replay)`,
+          payment: {
+            txHash: existing.txHash,
+            amount: existing.amount,
+            to: existing.to as Address,
+          },
+        };
+      }
+      if (existing.status === "pending") {
+        throw new Error("Payment with this idempotency key is already in progress.");
+      }
+      // status === "failed" — allow retry
+    }
+  }
+
+  const adapter = await getAdapter(walletId);
   const reason = options.reason ?? "x402 payment";
 
-  const negotiation = await negotiate(url, options);
+  const negotiation = await negotiate(url, options, walletId);
 
   if (negotiation.type === "passthrough") {
     return negotiation.response;
   }
 
   const { accepted, paymentRequired, service } = negotiation.result;
+  const { evaluation } = negotiation;
+  const ruleDecision = evaluation.decision;
 
-  // Sign via adapter
+  if (ruleDecision.decision === "block") {
+    throw new Error(ruleDecision.reason);
+  }
+
+  if (ruleDecision.decision === "pending_approval") {
+    // Check auto-approve before creating an ApprovalRequest
+    const autoApproveResult = await checkAutoApprove(evaluation.ctx);
+    if (autoApproveResult?.approved) {
+      // Auto-approved — proceed with payment immediately (fall through to allow path)
+      // We log the auto-approve in the reason for audit trail
+    } else {
+      // Manual approval required
+      const entry = await resolveWalletEntry(walletId);
+      const approval = await createApprovalRequest({
+        walletId,
+        agentName: entry.agentIdentity?.name ?? null,
+        url,
+        method: options.method ?? "GET",
+        amount: formatUnits(BigInt(accepted.amount), 6),
+        asset: accepted.asset,
+        network: accepted.network,
+        reason,
+        ruleTriggered: ruleDecision.ruleName ?? "amount_threshold",
+        requestHeaders: options.headers ?? {},
+        requestBody: options.body,
+        accepted,
+        paymentRequired,
+      });
+
+      return {
+        status: 202,
+        headers: {},
+        body: JSON.stringify({
+          status: "pending_approval",
+          approvalId: approval.id,
+          reason: ruleDecision.reason,
+          expiresAt: approval.expiresAt,
+        }),
+        pendingApproval: {
+          approvalId: approval.id,
+          reason: ruleDecision.reason,
+          expiresAt: approval.expiresAt,
+        },
+      };
+    }
+  }
+
+  // decision === "allow" — proceed with payment
   const payload = await signPayment(adapter, accepted);
 
-  // Record pending transaction
-  const txRecord = addTransaction({
-    to: accepted.payTo,
-    service,
-    amount: formatUnits(BigInt(accepted.amount), 6),
-    asset: accepted.asset,
-    network: accepted.network,
-    txHash: null,
-    status: "pending",
-    reason,
-  });
+  const txRecord = await addTransaction(
+    {
+      to: accepted.payTo,
+      service,
+      amount: formatUnits(BigInt(accepted.amount), 6),
+      asset: accepted.asset,
+      network: accepted.network,
+      txHash: null,
+      status: "pending",
+      reason,
+    },
+    idempotencyKey,
+    walletId,
+  );
 
-  return retryWithPayment(url, options, paymentRequired, accepted, payload, txRecord.id);
+  return retryWithPayment(url, options, paymentRequired, accepted, payload, txRecord.id, walletId);
 }
 
 // ── Two-phase flow for browser wallets ───────────────────────────────
 
-/**
- * Phase 1: Negotiate payment and prepare EIP-712 signing data.
- * Does NOT sign — returns session + signing payload for the browser.
- */
 export async function x402Prepare(
   url: string,
   options: {
@@ -315,6 +381,7 @@ export async function x402Prepare(
     body?: string;
     reason?: string;
   } = {},
+  walletId?: string,
 ): Promise<{
   sessionId: string;
   domain: { name: string; version: string; chainId: number; verifyingContract: string };
@@ -332,15 +399,17 @@ export async function x402Prepare(
   payTo: string;
   network: string;
 }> {
-  const wallet = getWallet();
+  if (!walletId) throw new Error("walletId is required for x402Prepare");
+  const wallet = await getWallet(walletId);
   if (wallet.frozen) {
     throw new Error("Wallet is frozen. Unfreeze it before making payments.");
   }
 
-  const adapter = getAdapter();
+  const adapter = await getAdapter(walletId);
   const reason = options.reason ?? "x402 payment";
+  const entry = await resolveWalletEntry(walletId);
 
-  const negotiation = await negotiate(url, options);
+  const negotiation = await negotiate(url, options, walletId);
 
   if (negotiation.type === "passthrough") {
     throw new Error(
@@ -350,7 +419,6 @@ export async function x402Prepare(
 
   const { accepted, paymentRequired, service } = negotiation.result;
 
-  // Generate EIP-712 data (same as signPayment but without signing)
   const fromAddress = adapter.getAddress();
   const domain = USDC_DOMAIN[accepted.network];
   if (!domain) {
@@ -371,8 +439,7 @@ export async function x402Prepare(
     nonce,
   };
 
-  // Record pending transaction
-  const txRecord = addTransaction({
+  const txRecord = await addTransaction({
     to: accepted.payTo,
     service,
     amount: formatUnits(BigInt(accepted.amount), 6),
@@ -381,24 +448,26 @@ export async function x402Prepare(
     txHash: null,
     status: "pending",
     reason,
-  });
+  }, undefined, walletId);
 
-  // Store session
+  // Store session in DB (durable)
   const sessionId = randomBytes(16).toString("hex");
-  const session: PaymentSession = {
-    id: sessionId,
-    url,
-    method: options.method ?? "GET",
-    headers: { ...options.headers },
-    body: options.body,
-    reason,
-    accepted,
-    paymentRequired,
-    authorization,
-    txRecordId: txRecord.id,
-    expiresAt: validBefore,
-  };
-  paymentSessions.set(sessionId, session);
+  await db().paymentSession.create({
+    data: {
+      id: sessionId,
+      walletId: entry.id,
+      url,
+      method: options.method ?? "GET",
+      headers: JSON.stringify(options.headers ?? {}),
+      body: options.body ?? null,
+      reason,
+      accepted: JSON.stringify(accepted),
+      paymentRequired: JSON.stringify(paymentRequired),
+      authorization: JSON.stringify(authorization),
+      txRecordId: txRecord.id,
+      expiresAt: validBefore,
+    },
+  });
 
   return {
     sessionId,
@@ -419,9 +488,6 @@ export async function x402Prepare(
   };
 }
 
-/**
- * Phase 2: Accept browser-side signature, retry the original request.
- */
 export async function x402Complete(
   sessionId: string,
   signature: Hex,
@@ -431,15 +497,17 @@ export async function x402Complete(
   body: string;
   payment?: { txHash: string | null; amount: string; to: Address };
 }> {
-  const session = paymentSessions.get(sessionId);
-  if (!session) {
+  const row = await db().paymentSession.findUnique({ where: { id: sessionId } });
+  if (!row) {
     throw new Error("Payment session not found or expired.");
   }
 
+  const session = toPaymentSession(row);
+
   const now = Math.floor(Date.now() / 1000);
   if (now > session.expiresAt) {
-    paymentSessions.delete(sessionId);
-    updateTransaction(session.txRecordId, {
+    await db().paymentSession.delete({ where: { id: sessionId } });
+    await updateTransaction(session.txRecordId, {
       status: "failed",
       reason: "Payment session expired",
     });
@@ -447,7 +515,7 @@ export async function x402Complete(
   }
 
   // Clean up session immediately (one-time use)
-  paymentSessions.delete(sessionId);
+  await db().paymentSession.delete({ where: { id: sessionId } });
 
   const payload: ExactEvmPayload = {
     signature,
@@ -461,14 +529,154 @@ export async function x402Complete(
     session.accepted,
     payload,
     session.txRecordId,
+    session.walletId,
   );
+}
+
+// ── Approval Queue ───────────────────────────────────────────────────
+
+const APPROVAL_TTL_MINUTES = 15;
+
+interface CreateApprovalParams {
+  walletId: string;
+  agentName: string | null;
+  url: string;
+  method: string;
+  amount: string;
+  asset: string;
+  network: string;
+  reason: string;
+  ruleTriggered: string;
+  requestHeaders: Record<string, string>;
+  requestBody?: string;
+  accepted: PaymentRequirements;
+  paymentRequired: PaymentRequired;
+}
+
+async function createApprovalRequest(params: CreateApprovalParams) {
+  const id = randomBytes(16).toString("hex");
+  const expiresAt = new Date(Date.now() + APPROVAL_TTL_MINUTES * 60 * 1000);
+
+  const row = await db().approvalRequest.create({
+    data: {
+      id,
+      walletId: params.walletId,
+      agentName: params.agentName,
+      url: params.url,
+      method: params.method,
+      amount: params.amount,
+      asset: params.asset,
+      network: params.network,
+      reason: params.reason,
+      ruleTriggered: params.ruleTriggered,
+      status: "pending",
+      expiresAt,
+      requestHeaders: JSON.stringify(params.requestHeaders),
+      requestBody: params.requestBody ?? null,
+      accepted: JSON.stringify(params.accepted),
+      paymentRequired: JSON.stringify(params.paymentRequired),
+    },
+  });
+
+  return { id: row.id, expiresAt: row.expiresAt.toISOString() };
+}
+
+/**
+ * Execute a payment that was previously held for approval.
+ * Called when a human approves an ApprovalRequest.
+ */
+export async function executeApprovedPayment(
+  approvalId: string,
+  decidedBy?: string,
+): Promise<{
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+  payment: { txHash: string | null; amount: string; to: Address };
+}> {
+  const row = await db().approvalRequest.findUnique({ where: { id: approvalId } });
+  if (!row) throw new Error("Approval request not found");
+  if (row.status !== "pending") throw new Error(`Approval is already ${row.status}`);
+  if (new Date() > row.expiresAt) {
+    await db().approvalRequest.update({
+      where: { id: approvalId },
+      data: { status: "expired" },
+    });
+    throw new Error("Approval request has expired");
+  }
+
+  // Mark as approved
+  await db().approvalRequest.update({
+    where: { id: approvalId },
+    data: {
+      status: "approved",
+      decidedBy: decidedBy ?? "dashboard",
+      decidedAt: new Date(),
+    },
+  });
+
+  const walletId = row.walletId;
+  const adapter = await getAdapter(walletId);
+  if (!adapter.canSignServerSide) {
+    throw new Error("Cannot execute approved payment — wallet requires browser signing");
+  }
+
+  const accepted = JSON.parse(row.accepted) as PaymentRequirements;
+  const paymentRequired = JSON.parse(row.paymentRequired) as PaymentRequired;
+  const requestHeaders = JSON.parse(row.requestHeaders) as Record<string, string>;
+
+  // Sign and execute the payment
+  const payload = await signPayment(adapter, accepted);
+
+  const txRecord = await addTransaction(
+    {
+      to: accepted.payTo,
+      service: new URL(row.url).hostname,
+      amount: row.amount,
+      asset: row.asset,
+      network: row.network,
+      txHash: null,
+      status: "pending",
+      reason: row.reason,
+    },
+    undefined,
+    walletId,
+  );
+
+  return retryWithPayment(
+    row.url,
+    { method: row.method, headers: requestHeaders, body: row.requestBody ?? undefined },
+    paymentRequired,
+    accepted,
+    payload,
+    txRecord.id,
+    walletId,
+  );
+}
+
+/**
+ * Reject a pending approval request.
+ */
+export async function rejectApproval(
+  approvalId: string,
+  decidedBy?: string,
+): Promise<void> {
+  const row = await db().approvalRequest.findUnique({ where: { id: approvalId } });
+  if (!row) throw new Error("Approval request not found");
+  if (row.status !== "pending") throw new Error(`Approval is already ${row.status}`);
+
+  await db().approvalRequest.update({
+    where: { id: approvalId },
+    data: {
+      status: "rejected",
+      decidedBy: decidedBy ?? "dashboard",
+      decidedAt: new Date(),
+    },
+  });
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-/**
- * Find a payment option we can fulfill: scheme=exact, EVM network, USDC asset.
- */
 function findAcceptedOption(
   accepts: PaymentRequirements[],
 ): PaymentRequirements | null {
@@ -487,9 +695,6 @@ function findAcceptedOption(
   return null;
 }
 
-/**
- * Create an EIP-712 TransferWithAuthorization signature via the wallet adapter.
- */
 async function signPayment(
   adapter: WalletAdapter,
   requirements: PaymentRequirements,

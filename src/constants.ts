@@ -52,6 +52,28 @@ export const TRANSFER_WITH_AUTHORIZATION_TYPES = {
   ],
 } as const;
 
+// ── ERC-3009 transferWithAuthorization ABI ──────────────────────────
+
+export const TRANSFER_WITH_AUTHORIZATION_ABI = [
+  {
+    inputs: [
+      { name: "from", type: "address" },
+      { name: "to", type: "address" },
+      { name: "value", type: "uint256" },
+      { name: "validAfter", type: "uint256" },
+      { name: "validBefore", type: "uint256" },
+      { name: "nonce", type: "bytes32" },
+      { name: "v", type: "uint8" },
+      { name: "r", type: "bytes32" },
+      { name: "s", type: "bytes32" },
+    ],
+    name: "transferWithAuthorization",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+] as const;
+
 // ── ERC-20 ABI (balanceOf + decimals) ───────────────────────────────
 
 export const ERC20_ABI = [
@@ -103,7 +125,7 @@ export const CHAINS: Record<number, {
 // ── Default data directory ──────────────────────────────────────────
 
 export const DEFAULT_DATA_DIR = ".clawlet";
-export const STATE_FILE = "state.json";
+export const DB_FILE = "clawlet.db";
 
 // ── ERC-8004 Identity Registry ─────────────────────────────────────
 
@@ -136,8 +158,5 @@ export const EXPLORER_ADDRESS_URL = (address: string, network?: string) => {
   return `${base}/address/${address}`;
 };
 
-// Legacy aliases
-export const X402SCAN_TX_URL = (txHash: string) =>
-  EXPLORER_TX_URL(txHash);
-export const X402SCAN_ADDRESS_URL = (address: string) =>
-  EXPLORER_ADDRESS_URL(address);
+export const X402SCAN_TX_URL = EXPLORER_TX_URL;
+export const X402SCAN_ADDRESS_URL = EXPLORER_ADDRESS_URL;

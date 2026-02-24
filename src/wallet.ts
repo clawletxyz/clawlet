@@ -1,5 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { getState, persist, requireActiveEntry, getActiveEntry, getNetworkCaip2 } from "./store.js";
+import { db } from "./db.js";
+import { getNetworkCaip2, resolveWalletEntry } from "./store.js";
+import { toWalletEntry } from "./mappers.js";
 import { DEFAULT_RULES } from "./types.js";
 import type { WalletInfo, WalletEntry, AgentIdentity } from "./types.js";
 import type { WalletAdapter } from "./adapters/types.js";
@@ -17,15 +19,15 @@ function hydrateAdapter(entry: WalletEntry): WalletAdapter {
   return adapter;
 }
 
-/** Get the active wallet's adapter. */
-export function getAdapter(): WalletAdapter {
-  const entry = requireActiveEntry();
+/** Get the wallet's adapter. walletId is required. */
+export async function getAdapter(walletId: string): Promise<WalletAdapter> {
+  const entry = await resolveWalletEntry(walletId);
   return hydrateAdapter(entry);
 }
 
 /**
  * Create a new wallet and add it to the wallets list.
- * Automatically becomes the active wallet.
+ * Returns the new wallet entry (caller decides whether to make it "active" in the UI).
  */
 export async function createWallet(
   adapterType?: string,
@@ -34,21 +36,21 @@ export async function createWallet(
 ): Promise<WalletEntry> {
   let adapter: WalletAdapter;
 
-  if (adapterType === "privy") {
-    if (!credentials?.appId || !credentials?.appSecret)
-      throw new Error("Privy requires appId and appSecret");
-    const { PrivyAdapter } = await import("./adapters/index.js");
-    adapter = new PrivyAdapter({ type: "privy", appId: credentials.appId, appSecret: credentials.appSecret });
+  // Consume a pre-configured adapter (from MCP configure_adapter flow)
+  const pending = getPendingAdapter();
+  if (pending && (!adapterType || pending.type === adapterType)) {
+    adapter = pending;
+    clearPendingAdapter();
   } else if (adapterType === "coinbase-cdp") {
-    if (!credentials?.apiKeyId || !credentials?.apiKeySecret)
-      throw new Error("Coinbase CDP requires apiKeyId and apiKeySecret");
+    if (!credentials?.apiKeyId || !credentials?.apiKeySecret || !credentials?.walletSecret)
+      throw new Error("Coinbase CDP requires apiKeyId, apiKeySecret, and walletSecret");
     const { CoinbaseCdpAdapter } = await import("./adapters/index.js");
-    adapter = new CoinbaseCdpAdapter({ type: "coinbase-cdp", apiKeyId: credentials.apiKeyId, apiKeySecret: credentials.apiKeySecret });
-  } else if (adapterType === "crossmint") {
-    if (!credentials?.apiKey)
-      throw new Error("Crossmint requires apiKey");
-    const { CrossmintAdapter } = await import("./adapters/index.js");
-    adapter = new CrossmintAdapter({ type: "crossmint", apiKey: credentials.apiKey });
+    adapter = new CoinbaseCdpAdapter({
+      type: "coinbase-cdp",
+      apiKeyId: credentials.apiKeyId,
+      apiKeySecret: credentials.apiKeySecret,
+      walletSecret: credentials.walletSecret,
+    });
   } else if (adapterType === "browser") {
     if (!credentials?.address)
       throw new Error("Browser wallet requires an address");
@@ -58,106 +60,121 @@ export async function createWallet(
     adapter = new LocalKeyAdapter();
   }
 
-  const address = await adapter.createWallet();
-  const state = getState();
+  let address: string;
+  try {
+    address = await adapter.createWallet();
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    if (adapter.type === "coinbase-cdp") {
+      throw new Error(`Failed to provision CDP wallet — check credentials. ${msg}`);
+    }
+    throw err;
+  }
   const id = randomBytes(8).toString("hex");
-  const walletNum = state.wallets.length + 1;
+  const walletCount = await db().wallet.count();
+  const walletNum = walletCount + 1;
 
-  const entry: WalletEntry = {
-    id,
-    label: label || `Wallet ${walletNum}`,
-    wallet: {
+  const adapterConfig = adapter.toJSON();
+
+  const row = await db().wallet.create({
+    data: {
+      id,
+      label: label || `Wallet ${walletNum}`,
       address,
-      createdAt: new Date().toISOString(),
+      createdAt: new Date(),
       frozen: false,
+      adapterType: adapterConfig.type,
+      adapterConfig: JSON.stringify(adapterConfig),
+      maxPerTransaction: DEFAULT_RULES.maxPerTransaction,
+      dailyCap: DEFAULT_RULES.dailyCap,
+      allowedServices: JSON.stringify(DEFAULT_RULES.allowedServices),
+      blockedServices: JSON.stringify(DEFAULT_RULES.blockedServices),
     },
-    adapterConfig: adapter.toJSON(),
-    rules: { ...DEFAULT_RULES },
-    transactions: [],
-  };
+    include: { transactions: true },
+  });
 
-  state.wallets.push(entry);
-  state.activeWalletId = id;
   adapterCache.set(id, adapter);
-  persist();
 
-  return entry;
+  return toWalletEntry(row);
 }
 
 /** List all wallets. */
-export function listWallets(): WalletEntry[] {
-  return getState().wallets;
-}
-
-/** Switch the active wallet by id. */
-export function switchWallet(walletId: string): WalletEntry {
-  const state = getState();
-  const entry = state.wallets.find((w) => w.id === walletId);
-  if (!entry) throw new Error(`Wallet ${walletId} not found`);
-  state.activeWalletId = walletId;
-  persist();
-  return entry;
+export async function listWallets(): Promise<WalletEntry[]> {
+  const rows = await db().wallet.findMany({
+    include: { transactions: { orderBy: { timestamp: "asc" } } },
+  });
+  return rows.map(toWalletEntry);
 }
 
 /** Remove a wallet by id. */
-export function removeWallet(walletId: string): void {
-  const state = getState();
-  const idx = state.wallets.findIndex((w) => w.id === walletId);
-  if (idx === -1) throw new Error(`Wallet ${walletId} not found`);
-  state.wallets.splice(idx, 1);
+export async function removeWallet(walletId: string): Promise<void> {
+  const existing = await db().wallet.findUnique({ where: { id: walletId } });
+  if (!existing) throw new Error(`Wallet ${walletId} not found`);
+
+  await db().wallet.delete({ where: { id: walletId } });
   adapterCache.delete(walletId);
-  if (state.activeWalletId === walletId) {
-    state.activeWalletId = state.wallets[0]?.id ?? null;
-  }
-  persist();
 }
 
-/** Load the current active wallet info or throw. */
-export function getWallet(): WalletInfo {
-  return requireActiveEntry().wallet;
+/** Load the wallet info. walletId is required. */
+export async function getWallet(walletId: string): Promise<WalletInfo> {
+  const entry = await resolveWalletEntry(walletId);
+  return entry.wallet;
 }
 
-/** Get USDC balance (human-readable) via the active adapter. */
-export async function getBalance(network?: string): Promise<string> {
-  const adapter = getAdapter();
+/** Get USDC balance (human-readable) via the adapter. walletId is required. */
+export async function getBalance(network: string, walletId: string): Promise<string> {
+  const adapter = await getAdapter(walletId);
   return adapter.getBalance(network ?? getNetworkCaip2());
 }
 
-/** Freeze the active wallet. */
-export function freezeWallet(): void {
-  const entry = requireActiveEntry();
-  entry.wallet.frozen = true;
-  persist();
+/** Freeze a wallet. walletId is required. */
+export async function freezeWallet(walletId: string): Promise<void> {
+  const entry = await resolveWalletEntry(walletId);
+  await db().wallet.update({
+    where: { id: entry.id },
+    data: { frozen: true },
+  });
 }
 
-/** Unfreeze the active wallet. */
-export function unfreezeWallet(): void {
-  const entry = requireActiveEntry();
-  entry.wallet.frozen = false;
-  persist();
+/** Unfreeze a wallet. walletId is required. */
+export async function unfreezeWallet(walletId: string): Promise<void> {
+  const entry = await resolveWalletEntry(walletId);
+  await db().wallet.update({
+    where: { id: entry.id },
+    data: { frozen: false },
+  });
 }
 
-/** Rename the active wallet. */
-export function renameWallet(label: string): void {
-  const entry = requireActiveEntry();
-  entry.label = label;
-  persist();
+/** Rename a wallet. walletId is required. */
+export async function renameWallet(label: string, walletId: string): Promise<void> {
+  const entry = await resolveWalletEntry(walletId);
+  await db().wallet.update({
+    where: { id: entry.id },
+    data: { label },
+  });
 }
 
-/** Set or update agent identity on the active wallet. */
-export function setAgentIdentity(identity: AgentIdentity): void {
-  const entry = requireActiveEntry();
-  entry.agentIdentity = {
-    ...entry.agentIdentity,
-    ...identity,
-  };
-  persist();
+/** Set or update agent identity on a wallet. walletId is required. */
+export async function setAgentIdentity(identity: AgentIdentity, walletId: string): Promise<void> {
+  const entry = await resolveWalletEntry(walletId);
+  const existing = entry.agentIdentity;
+
+  await db().wallet.update({
+    where: { id: entry.id },
+    data: {
+      agentName: identity.name ?? existing?.name ?? null,
+      agentDescription: identity.description ?? existing?.description ?? null,
+      agentId: identity.agentId ?? existing?.agentId ?? null,
+      agentRegistry: identity.agentRegistry ?? existing?.agentRegistry ?? null,
+      agentURI: identity.agentURI ?? existing?.agentURI ?? null,
+    },
+  });
 }
 
-/** Get agent identity from the active wallet, or null. */
-export function getAgentIdentity(): AgentIdentity | null {
-  const entry = getActiveEntry();
-  return entry?.agentIdentity ?? null;
+/** Get agent identity from a wallet, or null. walletId is required. */
+export async function getAgentIdentity(walletId: string): Promise<AgentIdentity | null> {
+  const entry = await resolveWalletEntry(walletId);
+  return entry.agentIdentity ?? null;
 }
 
 /** For configure_adapter flow (MCP): pre-configure an adapter, store it temporarily. */

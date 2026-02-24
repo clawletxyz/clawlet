@@ -40,7 +40,7 @@ function StepIndicator({ current }: { current: Step }) {
         <div
           key={s}
           className={`h-[6px] w-8 rounded-full transition-colors duration-200 ${
-            s === current ? "bg-[#2563EB]" : "bg-[#E8E8E8]"
+            s === current ? "bg-[#111111]" : "bg-[#E8E8E8]"
           }`}
         />
       ))}

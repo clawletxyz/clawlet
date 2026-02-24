@@ -81,37 +81,37 @@ export default function SpendingBreakdown({
       <div className="p-5">
         {/* Summary Stats */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-6">
-          <div className="rounded-[10px] bg-white p-3">
-            <div className="flex items-center gap-1.5 mb-1">
-              <TrendingUp className="h-3 w-3 text-muted-foreground" />
-              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Total</span>
-            </div>
-            <p className="font-mono text-lg font-bold">{stats.total.toFixed(2)}</p>
-            <p className="text-[10px] text-muted-foreground">USDC</p>
+          <div className="rounded-[10px] bg-white p-4">
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Total</span>
+            <p className="mt-1.5 font-mono text-xl font-bold">{stats.total.toFixed(2)}</p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground flex items-center gap-1">
+              <TrendingUp className="h-3 w-3" />
+              USDC
+            </p>
           </div>
-          <div className="rounded-[10px] bg-white p-3">
-            <div className="flex items-center gap-1.5 mb-1">
-              <Hash className="h-3 w-3 text-muted-foreground" />
-              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Count</span>
-            </div>
-            <p className="font-mono text-lg font-bold">{stats.count}</p>
-            <p className="text-[10px] text-muted-foreground">transactions</p>
+          <div className="rounded-[10px] bg-white p-4">
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Count</span>
+            <p className="mt-1.5 font-mono text-xl font-bold">{stats.count}</p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground flex items-center gap-1">
+              <Hash className="h-3 w-3" />
+              transactions
+            </p>
           </div>
-          <div className="rounded-[10px] bg-white p-3">
-            <div className="flex items-center gap-1.5 mb-1">
-              <TrendingUp className="h-3 w-3 text-muted-foreground" />
-              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Average</span>
-            </div>
-            <p className="font-mono text-lg font-bold">{stats.avg.toFixed(4)}</p>
-            <p className="text-[10px] text-muted-foreground">USDC / tx</p>
+          <div className="rounded-[10px] bg-white p-4">
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Average</span>
+            <p className="mt-1.5 font-mono text-xl font-bold">{stats.avg.toFixed(4)}</p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground flex items-center gap-1">
+              <TrendingUp className="h-3 w-3" />
+              USDC / tx
+            </p>
           </div>
-          <div className="rounded-[10px] bg-white p-3">
-            <div className="flex items-center gap-1.5 mb-1">
-              <AlertTriangle className="h-3 w-3 text-muted-foreground" />
-              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Failed</span>
-            </div>
-            <p className="font-mono text-lg font-bold">{stats.failed}</p>
-            <p className="text-[10px] text-muted-foreground">transactions</p>
+          <div className="rounded-[10px] bg-white p-4">
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Failed</span>
+            <p className="mt-1.5 font-mono text-xl font-bold">{stats.failed}</p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground flex items-center gap-1">
+              <AlertTriangle className="h-3 w-3" />
+              transactions
+            </p>
           </div>
         </div>
 
@@ -131,54 +131,54 @@ export default function SpendingBreakdown({
           </div>
         )}
 
-        {/* 7-Day Chart */}
-        <div className="mb-6">
-          <p className="text-xs font-medium mb-3">Last 7 Days</p>
-          <div className="flex items-end gap-1.5 h-24">
-            {dailyData.map((day, i) => (
-              <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                <div className="w-full relative" style={{ height: "80px" }}>
-                  <div
-                    className="absolute bottom-0 w-full rounded-t bg-[#2563EB] transition-all hover:bg-[#1D4ED8]"
-                    style={{
-                      height: `${Math.max(2, (day.amount / maxDaily) * 80)}px`,
-                    }}
-                    title={`${day.amount.toFixed(4)} USDC`}
-                  />
-                </div>
-                <span className="text-[9px] text-muted-foreground">{day.label}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Service Breakdown */}
-        {serviceData.length > 0 && (
-          <div>
-            <p className="text-xs font-medium mb-3">By Service</p>
-            <div className="space-y-2.5">
-              {serviceData.map(([service, data]) => (
-                <div key={service}>
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-medium">{service}</span>
-                      <Badge>{data.count} tx</Badge>
-                    </div>
-                    <span className="font-mono text-xs text-muted-foreground">
-                      {data.total.toFixed(4)} USDC
-                    </span>
-                  </div>
-                  <div className="h-1.5 w-full rounded-full bg-[#E8E8E8] overflow-hidden">
+        {/* Charts row */}
+        <div className={`grid gap-5 ${serviceData.length > 0 ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"}`}>
+          {/* 7-Day Chart */}
+          <div className="rounded-[10px] bg-white p-4">
+            <p className="text-xs font-medium mb-4">Last 7 Days</p>
+            <div className="flex items-end gap-2 h-28">
+              {dailyData.map((day, i) => (
+                <div key={i} className="flex-1 flex flex-col items-center gap-2 group" title={`${day.amount.toFixed(4)} USDC`}>
+                  <div className="w-full flex justify-center" style={{ height: "96px", alignItems: "flex-end" }}>
                     <div
-                      className="h-full rounded-full bg-[#2563EB]/50 transition-all"
-                      style={{ width: `${(data.total / maxServiceTotal) * 100}%` }}
+                      className="w-full max-w-[20px] rounded-t-[3px] bg-[#D0D0D0] transition-colors duration-150 group-hover:bg-[#111111]"
+                      style={{ height: `${Math.max(2, (day.amount / maxDaily) * 96)}px` }}
                     />
                   </div>
+                  <span className="text-[10px] text-muted-foreground">{day.label}</span>
                 </div>
               ))}
             </div>
           </div>
-        )}
+
+          {/* Service Breakdown */}
+          {serviceData.length > 0 && (
+            <div className="rounded-[10px] bg-white p-4">
+              <p className="text-xs font-medium mb-4">By Service</p>
+              <div className="space-y-2.5">
+                {serviceData.map(([service, data]) => (
+                  <div key={service}>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-medium">{service}</span>
+                        <Badge>{data.count} tx</Badge>
+                      </div>
+                      <span className="font-mono text-xs text-muted-foreground">
+                        {data.total.toFixed(4)} USDC
+                      </span>
+                    </div>
+                    <div className="h-1 w-full rounded-full bg-[#F2F2F2] overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-[#D0D0D0] transition-all"
+                        style={{ width: `${(data.total / maxServiceTotal) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </Card>
   );

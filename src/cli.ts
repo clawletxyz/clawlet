@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 
-import { existsSync } from "node:fs"
-import { join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { join } from "node:path"
 
 const VERSION = "0.0.2"
 
@@ -70,9 +69,6 @@ function printMcpConfig(port: number) {
 }
 
 function printBanner(port: number) {
-  const stateFile = join(process.cwd(), ".clawlet", "state.json")
-  const isFirstRun = !existsSync(stateFile)
-
   console.log(`
   ┌─────────────────────────────────────────┐
   │                                         │
@@ -84,13 +80,6 @@ function printBanner(port: number) {
   │                                         │
   └─────────────────────────────────────────┘
 `)
-
-  if (isFirstRun) {
-    console.log(`  First run detected — no wallet found.`)
-    console.log(
-      `  Open http://localhost:${port} to create your first wallet.\n`,
-    )
-  }
 
   printMcpConfig(port)
 }

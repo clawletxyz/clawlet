@@ -23,10 +23,11 @@ function getClient(network: string): PublicClient {
  * Local private key adapter.
  *
  * Generates and stores a raw private key locally. Best for quick
- * testing and development. The key lives in .clawlet/state.json.
+ * testing and development. The key is stored in the SQLite database.
  */
 export class LocalKeyAdapter implements WalletAdapter {
   readonly type = "local-key" as const;
+  readonly canSignServerSide = true;
   private privateKey: Hex | null;
   private address: Address | null;
 

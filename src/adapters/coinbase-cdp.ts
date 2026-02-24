@@ -3,67 +3,65 @@ import type { WalletAdapter, CoinbaseCdpConfig } from "./types.js";
 import { getUsdcBalance } from "./evm-balance.js";
 
 /**
- * Coinbase CDP (Coinbase Developer Platform) Adapter
+ * Coinbase CDP v2 Adapter
  *
- * Integrates with Coinbase's Agentic Wallets — purpose-built wallet
- * infrastructure for AI agents with native x402 support, spending limits,
- * and KYT screening. Uses server-signer mode so Coinbase manages keys.
+ * Uses @coinbase/cdp-sdk with TEE-based key management.
+ * Accounts are idempotent (getOrCreateAccount) and work across all EVM networks.
  *
- * Requires: @coinbase/coinbase-sdk (install separately)
+ * Requires: @coinbase/cdp-sdk
  * @see https://docs.cdp.coinbase.com
  */
 export class CoinbaseCdpAdapter implements WalletAdapter {
   readonly type = "coinbase-cdp" as const;
+  readonly canSignServerSide = true;
   private apiKeyId: string;
   private apiKeySecret: string;
-  private walletId: string | null;
+  private walletSecret: string;
+  private accountName: string;
   private address: Address | null;
+  private cdpClient: unknown | null = null;
 
   constructor(config: CoinbaseCdpConfig) {
     this.apiKeyId = config.apiKeyId;
     this.apiKeySecret = config.apiKeySecret;
-    this.walletId = config.walletId ?? null;
+    this.walletSecret = config.walletSecret;
+    this.accountName = config.accountName ?? "clawlet-default";
     this.address = (config.address as Address) ?? null;
   }
 
-  private async loadSdk() {
+  private async getClient() {
+    if (this.cdpClient) return this.cdpClient as any;
     try {
-      return await import("@coinbase/coinbase-sdk");
+      const { CdpClient } = await import("@coinbase/cdp-sdk");
+      this.cdpClient = new CdpClient({
+        apiKeyId: this.apiKeyId,
+        apiKeySecret: this.apiKeySecret,
+        walletSecret: this.walletSecret,
+      });
+      return this.cdpClient as any;
     } catch {
       throw new Error(
-        "Coinbase CDP SDK not installed. Run: npm install @coinbase/coinbase-sdk",
+        "Coinbase CDP SDK not installed. Run: npm install @coinbase/cdp-sdk",
       );
     }
   }
 
-  private async configureSdk() {
-    const { Coinbase } = await this.loadSdk();
-    Coinbase.configure({
-      apiKeyName: this.apiKeyId,
-      privateKey: this.apiKeySecret,
-      useServerSigner: true,
-    });
-  }
-
   async createWallet(): Promise<Address> {
-    await this.configureSdk();
-    const { Wallet } = await this.loadSdk();
-
-    const wallet = await Wallet.create({ networkId: "base-mainnet" });
-    this.walletId = wallet.getId() ?? null;
-
-    const defaultAddress = await wallet.getDefaultAddress();
-    this.address = defaultAddress.getId() as Address;
+    const cdp = await this.getClient();
+    const account = await cdp.evm.getOrCreateAccount({
+      name: this.accountName,
+    });
+    this.address = account.address as Address;
     return this.address;
   }
 
   getAddress(): Address {
-    if (!this.address) throw new Error("No Coinbase CDP wallet initialized.");
+    if (!this.address) throw new Error("No Coinbase CDP account initialized.");
     return this.address;
   }
 
   isInitialized(): boolean {
-    return this.walletId !== null && this.address !== null;
+    return this.address !== null;
   }
 
   async getBalance(network: string): Promise<string> {
@@ -76,11 +74,9 @@ export class CoinbaseCdpAdapter implements WalletAdapter {
     primaryType: string;
     message: Record<string, unknown>;
   }): Promise<Hex> {
-    if (!this.walletId) throw new Error("No Coinbase CDP wallet initialized.");
-    await this.configureSdk();
-    const { Wallet } = await this.loadSdk();
+    if (!this.address) throw new Error("No Coinbase CDP account initialized.");
+    const cdp = await this.getClient();
 
-    // Hash the EIP-712 typed data locally using viem
     const hash = hashTypedData({
       domain: params.domain,
       types: params.types as Record<string, { name: string; type: string }[]>,
@@ -88,12 +84,12 @@ export class CoinbaseCdpAdapter implements WalletAdapter {
       message: params.message,
     });
 
-    // Fetch the wallet and sign with server-signer
-    const wallet = await Wallet.fetch(this.walletId);
-    let payloadSignature = await wallet.createPayloadSignature(hash);
-    payloadSignature = await payloadSignature.wait();
+    const result = await cdp.evm.signHash({
+      address: this.address,
+      hash,
+    });
 
-    return payloadSignature.getSignature() as Hex;
+    return result.signature as Hex;
   }
 
   toJSON(): CoinbaseCdpConfig {
@@ -101,7 +97,8 @@ export class CoinbaseCdpAdapter implements WalletAdapter {
       type: "coinbase-cdp",
       apiKeyId: this.apiKeyId,
       apiKeySecret: this.apiKeySecret,
-      walletId: this.walletId ?? undefined,
+      walletSecret: this.walletSecret,
+      accountName: this.accountName,
       address: this.address ?? undefined,
     };
   }

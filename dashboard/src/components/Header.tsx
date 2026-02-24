@@ -1,14 +1,6 @@
 import { useState } from "react";
 import type { WalletSummary, NetworkId } from "../types";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import {
   Dialog,
   DialogContent,
@@ -18,18 +10,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  ChevronDown,
-  Plus,
-  X,
   Snowflake,
   Sun,
 } from "lucide-react";
-import { ProviderIcon } from "@/lib/providers";
+import WalletSelectorDialog from "./WalletSelectorDialog";
 
 type ConfirmAction =
   | { type: "freeze" }
-  | { type: "unfreeze" }
-  | { type: "remove"; walletId: string; walletLabel: string };
+  | { type: "unfreeze" };
 
 interface HeaderProps {
   hasWallet: boolean;
@@ -44,11 +32,6 @@ interface HeaderProps {
   onSetNetwork: (net: NetworkId) => void;
   onRemoveWallet: (id: string) => void;
   onAddWallet: () => void;
-}
-
-function truncateAddr(addr: string): string {
-  if (addr.length <= 12) return addr;
-  return addr.slice(0, 6) + "\u2026" + addr.slice(-4);
 }
 
 export default function Header({
@@ -72,13 +55,12 @@ export default function Header({
     switch (confirmAction.type) {
       case "freeze": onFreeze(); break;
       case "unfreeze": onUnfreeze(); break;
-      case "remove": onRemoveWallet(confirmAction.walletId); break;
     }
     setConfirmAction(null);
   };
 
   const getConfirmProps = () => {
-    if (!confirmAction) return { title: "", description: "" };
+    if (!confirmAction) return { title: "", description: "", confirmLabel: "" };
     switch (confirmAction.type) {
       case "freeze":
         return {
@@ -91,12 +73,6 @@ export default function Header({
           title: "Unfreeze Wallet",
           description: "This will re-enable transactions for this wallet.",
           confirmLabel: "Unfreeze",
-        };
-      case "remove":
-        return {
-          title: "Remove Wallet",
-          description: `Are you sure you want to remove "${confirmAction.walletLabel}"? This action cannot be undone.`,
-          confirmLabel: "Remove",
         };
     }
   };
@@ -139,65 +115,17 @@ export default function Header({
             </div>
           </div>
 
-          {/* Wallet switcher */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="gap-1.5">
-                <span className="max-w-[120px] truncate">
-                  {walletLabel || (hasWallet ? "Wallet" : "No Wallet")}
-                </span>
-                <ChevronDown className="h-3.5 w-3.5 opacity-50" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-[280px]">
-              {wallets.map((w) => (
-                <DropdownMenuItem
-                  key={w.id}
-                  className="flex items-center justify-between gap-3 py-2.5 cursor-pointer"
-                  onClick={() => onSwitchWallet(w.id)}
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#F2F2F2] overflow-hidden">
-                      <ProviderIcon adapter={w.adapter} size={16} />
-                    </div>
-                    <div className="flex flex-col gap-0.5 min-w-0">
-                      <span className="text-sm font-medium truncate">
-                        {w.label}
-                        {w.id === walletId && (
-                          <span className="ml-1.5 text-xs text-muted-foreground">(current)</span>
-                        )}
-                      </span>
-                      <span className="font-mono text-xs text-muted-foreground">
-                        {truncateAddr(w.address)}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <Badge>
-                      {w.frozen ? "Frozen" : "Active"}
-                    </Badge>
-                    {wallets.length > 1 && w.id !== walletId && (
-                      <button
-                        className="rounded-full p-1 text-muted-foreground hover:bg-[#F2F2F2] hover:text-foreground transition-colors"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setConfirmAction({ type: "remove", walletId: w.id, walletLabel: w.label });
-                        }}
-                        title="Remove wallet"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    )}
-                  </div>
-                </DropdownMenuItem>
-              ))}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem className="gap-2 cursor-pointer" onClick={onAddWallet}>
-                <Plus className="h-3.5 w-3.5" />
-                Add Wallet
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {/* Wallet selector dialog */}
+          <WalletSelectorDialog
+            walletId={walletId}
+            walletLabel={walletLabel}
+            wallets={wallets}
+            hasWallet={hasWallet}
+            currentNetwork={network}
+            onSwitchWallet={onSwitchWallet}
+            onRemoveWallet={onRemoveWallet}
+            onAddWallet={onAddWallet}
+          />
 
           {/* Freeze/Unfreeze */}
           {hasWallet && (

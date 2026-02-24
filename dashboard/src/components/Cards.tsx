@@ -48,7 +48,7 @@ export default function Cards({
   const spentPct = capNum > 0 ? Math.min(100, (spentNum / capNum) * 100) : 0;
 
   return (
-    <div className="grid grid-cols-1 gap-4 mb-6 sm:grid-cols-3 lg:grid-cols-1">
+    <div className="grid grid-cols-1 gap-4 mb-6 sm:grid-cols-3">
       {/* Wallet Card */}
       <Card className="p-5">
         <div className="flex items-center gap-2 mb-3">

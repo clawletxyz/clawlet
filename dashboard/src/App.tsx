@@ -15,6 +15,8 @@ import FundWallet from "./components/FundWallet";
 import SpendingBreakdown from "./components/SpendingBreakdown";
 import QuickPayment from "./components/QuickPayment";
 import McpSetup from "./components/McpSetup";
+import ApiKeyPrompt from "./components/ApiKeyPrompt";
+import TabBar, { type TabId } from "./components/TabBar";
 
 function timeAgo(date: Date): string {
   const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -27,11 +29,14 @@ function timeAgo(date: Date): string {
 export default function App() {
   const {
     demoMode,
+    needsAuth,
+    setApiKey,
     loading,
     wallet,
     walletId,
     walletLabel,
     adapterType,
+    canSignServerSide,
     wallets,
     balance,
     rules,
@@ -54,6 +59,18 @@ export default function App() {
 
   const [showAddWallet, setShowAddWallet] = useState(false);
 
+  const getInitialTab = (): TabId => {
+    const hash = window.location.hash.replace("#", "") as TabId;
+    if (["overview", "rules", "transactions", "settings"].includes(hash)) return hash;
+    return "overview";
+  };
+  const [activeTab, setActiveTab] = useState<TabId>(getInitialTab);
+
+  const handleTabChange = useCallback((tab: TabId) => {
+    setActiveTab(tab);
+    history.replaceState(null, "", `#${tab}`);
+  }, []);
+
   const showToast = useCallback(
     (message: string, type: "success" | "error" | "info" = "success") => {
       if (type === "error") toast.error(message);
@@ -64,7 +81,22 @@ export default function App() {
   );
 
   const scrollTo = useCallback((id: string) => {
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const tabMap: Record<string, TabId> = {
+      "spending-rules": "rules",
+      "agent-identity": "settings",
+      "fund-wallet": "settings",
+      "quick-payment": "settings",
+    };
+    const targetTab = tabMap[id];
+    if (targetTab) {
+      setActiveTab(targetTab);
+      history.replaceState(null, "", `#${targetTab}`);
+      requestAnimationFrame(() => {
+        document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    } else {
+      document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   }, []);
 
   const handleFreeze = async () => {
@@ -126,6 +158,25 @@ export default function App() {
   return (
     <TooltipProvider>
       <div className="min-h-screen bg-white">
+        {needsAuth && <ApiKeyPrompt onSubmit={setApiKey} onRetry={refresh} />}
+
+        {/* Testnet banner — full-width solid bar at the very top */}
+        {isTestnet && wallet && (
+          <div className="w-full bg-[#F59E0B] px-4 py-2">
+            <div className="mx-auto max-w-[1280px] flex items-center justify-center gap-2">
+              <span className="flex h-4 w-4 items-center justify-center rounded-full border-[1.5px] border-white">
+                <span className="h-1.5 w-1.5 rounded-full bg-white" />
+              </span>
+              <p className="text-sm font-medium text-white">
+                Testnet Mode — Base Sepolia
+              </p>
+              <span className="text-xs text-white/80">
+                · Transactions use testnet USDC
+              </span>
+            </div>
+          </div>
+        )}
+
         <div className="mx-auto max-w-[1280px] px-12 py-8 max-[768px]:px-6">
           <Header
             hasWallet={!!wallet}
@@ -180,18 +231,6 @@ export default function App() {
             </div>
           )}
 
-          {isTestnet && wallet && (
-            <div className="mb-6 flex items-center gap-2.5 rounded-[10px] border border-dashed border-[#D0D0D0] px-4 py-3">
-              <span className="flex h-5 w-5 items-center justify-center rounded-full border border-[#D0D0D0]">
-                <span className="h-1.5 w-1.5 rounded-full border border-[#888888]" />
-              </span>
-              <div>
-                <p className="text-sm font-medium text-[#111111]">Testnet Mode — Base Sepolia</p>
-                <p className="text-xs text-[#888888]">Transactions use testnet USDC. No real funds are at risk.</p>
-              </div>
-            </div>
-          )}
-
           {isFrozen && (
             <div className="mb-6 flex items-center gap-2 rounded-[10px] bg-[#F2F2F2] px-4 py-3 text-sm font-medium text-[#111111]">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -216,6 +255,7 @@ export default function App() {
           <div className={isFrozen ? "opacity-60 transition-opacity hover:opacity-80" : ""}>
             {loading ? (
               <>
+                <TabBar activeTab={activeTab} onChange={handleTabChange} />
                 <Cards
                   loading
                   wallet={null}
@@ -226,7 +266,6 @@ export default function App() {
                   rules={null}
                   network={network}
                 />
-                <Transactions loading transactions={[]} onRefresh={refresh} />
               </>
             ) : !wallet && !showAddWallet ? (
               <NoWallet onCreate={handleCreateWallet} showToast={showToast}  />
@@ -241,9 +280,10 @@ export default function App() {
                   onScrollTo={scrollTo}
                 />
 
-                <div className="lg:grid lg:grid-cols-[340px_1fr] lg:gap-6 lg:items-start">
-                  {/* Left column — wallet config (sticky on desktop) */}
-                  <div className="lg:sticky lg:top-[72px] lg:max-h-[calc(100vh-72px)] lg:overflow-y-auto scrollbar-hide">
+                <TabBar activeTab={activeTab} onChange={handleTabChange} />
+
+                {activeTab === "overview" && (
+                  <>
                     <Cards
                       wallet={wallet}
                       walletLabel={walletLabel}
@@ -253,13 +293,30 @@ export default function App() {
                       rules={rules}
                       network={network}
                     />
-
-                    <FundWallet
-                      wallet={wallet}
-                      network={network}
-                      balance={balance}
+                    <SpendingBreakdown
+                      transactions={transactions}
+                      rules={rules}
+                      todaySpent={todaySpent}
                     />
+                  </>
+                )}
 
+                {activeTab === "rules" && (
+                  <div id="spending-rules">
+                    <SpendingRules
+                      rules={rules}
+                      onSave={saveRules}
+                      showToast={showToast}
+                    />
+                  </div>
+                )}
+
+                {activeTab === "transactions" && (
+                  <Transactions transactions={transactions} onRefresh={refresh} />
+                )}
+
+                {activeTab === "settings" && (
+                  <>
                     <div id="agent-identity">
                       <AgentIdentity
                         identity={agentIdentity}
@@ -269,37 +326,25 @@ export default function App() {
                         showToast={showToast}
                       />
                     </div>
-
-                    <div id="spending-rules">
-                      <SpendingRules
-                        rules={rules}
-                        onSave={saveRules}
+                    <div id="fund-wallet">
+                      <FundWallet
+                        wallet={wallet}
+                        network={network}
+                        balance={balance}
+                      />
+                    </div>
+                    <div id="quick-payment">
+                      <QuickPayment
+                        onPay={testPayment}
+                        frozen={isFrozen}
+                        network={network}
+                        canSignServerSide={canSignServerSide}
                         showToast={showToast}
                       />
                     </div>
-
-                    <QuickPayment
-                      onPay={testPayment}
-                      frozen={isFrozen}
-                      network={network}
-                      adapterType={adapterType}
-                      showToast={showToast}
-                    />
-                  </div>
-
-                  {/* Right column — transaction data (scrolls naturally) */}
-                  <div>
-                    <SpendingBreakdown
-                      transactions={transactions}
-                      rules={rules}
-                      todaySpent={todaySpent}
-                    />
-
-                    <Transactions transactions={transactions} onRefresh={refresh} />
-
                     <McpSetup />
-                  </div>
-                </div>
+                  </>
+                )}
               </>
             ) : null}
           </div>

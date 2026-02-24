@@ -58,7 +58,7 @@ Once connected, your agent has these tools:
 | `unfreeze_wallet` | Re-enable payments |
 | `set_agent_identity` | Bind an ERC-8004 on-chain identity to the wallet |
 | `get_agent_identity` | Retrieve agent identity |
-| `configure_adapter` | Configure a managed wallet provider (Privy, CDP, Crossmint) |
+| `configure_adapter` | Configure Coinbase CDP wallet provider |
 
 ### Example conversation
 
@@ -112,19 +112,17 @@ Clawlet supports multiple wallet providers through a common adapter interface:
 | Adapter | Type | Custody | Use case |
 |---------|------|---------|----------|
 | `local-key` | Self-custodial | You | Development, testing, full control |
-| `privy` | Managed | Privy (SOC 2) | Production server-side agents |
-| `coinbase-cdp` | Managed | Coinbase | Production server-side agents |
-| `crossmint` | Managed | Crossmint | Production server-side agents |
+| `coinbase-cdp` | Managed | Coinbase (TEE) | Production server-side agents |
 | `browser-wallet` | Browser | MetaMask, etc. | Dashboard payments via browser extension |
 
-The default adapter (`local-key`) generates a private key locally — no third-party dependency. For production deployments, configure a managed adapter:
+The default adapter (`local-key`) generates a private key locally — no third-party dependency. For production deployments, configure the Coinbase CDP adapter:
 
 ```
-You:   Configure Privy as the wallet provider
-Agent: [calls configure_adapter] → Privy configured.
+You:   Configure Coinbase CDP as the wallet provider
+Agent: [calls configure_adapter] → Coinbase CDP configured.
 
 You:   Create a new wallet
-Agent: [calls create_wallet with adapter="privy"] → Wallet provisioned via Privy.
+Agent: [calls create_wallet with adapter="coinbase-cdp"] → Wallet provisioned via CDP.
 ```
 
 ## CLI
@@ -151,14 +149,12 @@ src/
 ├── rules.ts       # Spending rules engine
 ├── ledger.ts      # Transaction recording
 ├── x402.ts        # x402 protocol handler (EIP-712 signing, two-phase for browser wallets)
-├── store.ts       # JSON file persistence (.clawlet/state.json)
+├── store.ts       # SQLite persistence, wallet resolution (.clawlet/clawlet.db)
 ├── types.ts       # TypeScript type definitions
 ├── constants.ts   # Network addresses, ABIs, RPC URLs
 └── adapters/
     ├── local-key.ts      # Raw private key (dev/testing)
-    ├── privy.ts          # Privy Server Wallets
-    ├── coinbase-cdp.ts   # Coinbase CDP
-    ├── crossmint.ts      # Crossmint
+    ├── coinbase-cdp.ts   # Coinbase CDP v2 (TEE-based)
     ├── browser-wallet.ts # MetaMask / browser extension
     └── evm-balance.ts    # Shared ERC-20 balance lookup
 
@@ -209,27 +205,71 @@ Agent: [calls set_network with network="base-sepolia"] → Switched to testnet.
 
 ## Security
 
-- Private keys are stored locally in `.clawlet/state.json` (gitignored)
+- Private keys are stored locally in `.clawlet/clawlet.db` (gitignored)
 - The wallet only signs ERC-3009 `TransferWithAuthorization` — the facilitator can only execute the exact transfer described
 - Spending rules are enforced before any signature is created
 - Freeze blocks all payments instantly, no confirmation needed
-- Managed adapters (Privy, CDP, Crossmint) never expose keys to Clawlet
+- The Coinbase CDP adapter uses TEE-based key management — keys never leave the secure enclave
 
 ## REST API
 
-The dashboard server also exposes a full REST API at the same port:
+The dashboard server exposes a full REST API at the same port.
+
+### Authentication
+
+Set `CLAWLET_API_KEY` env var to require a bearer token on all API routes (except `/api/config`):
+
+```bash
+CLAWLET_API_KEY=my-secret-key clawlet start
+```
+
+Then include `Authorization: Bearer my-secret-key` in requests. If the env var is not set, auth is disabled.
+
+### Legacy routes (active wallet)
 
 ```
-GET    /api/wallets           List all wallets
-POST   /api/wallets           Create a new wallet
-POST   /api/wallets/switch    Switch active wallet
+GET    /api/config             Config flags (demoMode, authRequired)
+GET    /api/wallets            List all wallets
+POST   /api/wallets            Create a new wallet
+POST   /api/wallets/switch     Switch active wallet
+DELETE /api/wallets/:id        Delete a wallet
 GET    /api/balance            Get USDC balance
 GET    /api/rules              Get spending rules
 PUT    /api/rules              Update spending rules
 GET    /api/transactions       Get transaction history
+GET    /api/today-spent        Today's spending total
 POST   /api/pay                Make an x402 payment
 POST   /api/freeze             Freeze active wallet
 POST   /api/unfreeze           Unfreeze active wallet
+GET    /api/agent-identity     Get agent identity
+POST   /api/agent-identity     Set agent identity
+```
+
+### Wallet-scoped routes
+
+Target a specific wallet by ID — no need to switch the active wallet:
+
+```
+GET    /api/wallets/:walletId/transactions     Transactions for wallet
+GET    /api/wallets/:walletId/rules            Get spending rules
+PUT    /api/wallets/:walletId/rules            Update spending rules
+GET    /api/wallets/:walletId/balance          Get USDC balance
+POST   /api/wallets/:walletId/freeze           Freeze wallet
+POST   /api/wallets/:walletId/unfreeze         Unfreeze wallet
+POST   /api/wallets/:walletId/rename           Rename wallet
+GET    /api/wallets/:walletId/agent-identity   Get agent identity
+POST   /api/wallets/:walletId/agent-identity   Set agent identity
+GET    /api/wallets/:walletId/today-spent      Today's spending total
+GET    /api/wallets/:walletId/tags             Get wallet tags
+PUT    /api/wallets/:walletId/tags             Set/merge wallet tags
+POST   /api/wallets/:walletId/pay              Make an x402 payment
+```
+
+### Aggregate endpoints
+
+```
+GET    /api/overview           All wallets with rules, tags, and today's spend
+GET    /api/transactions/all   Cross-wallet transaction ledger (?limit=N)
 ```
 
 ## Contributing

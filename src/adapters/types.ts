@@ -2,14 +2,13 @@ import type { Address, Hex } from "viem";
 
 // ── Adapter Types ───────────────────────────────────────────────────
 
-export type AdapterType = "local-key" | "privy" | "coinbase-cdp" | "crossmint" | "browser";
+export type BuiltInAdapterType = "local-key" | "coinbase-cdp" | "browser";
+export type AdapterType = BuiltInAdapterType | (string & {});
 
 /** Persisted configuration for each adapter type. */
 export type AdapterConfig =
   | LocalKeyConfig
-  | PrivyConfig
   | CoinbaseCdpConfig
-  | CrossmintConfig
   | BrowserWalletConfig;
 
 export interface LocalKeyConfig {
@@ -17,26 +16,12 @@ export interface LocalKeyConfig {
   privateKey: Hex;
 }
 
-export interface PrivyConfig {
-  type: "privy";
-  appId: string;
-  appSecret: string;
-  walletId?: string;
-  address?: string;
-}
-
 export interface CoinbaseCdpConfig {
   type: "coinbase-cdp";
   apiKeyId: string;
   apiKeySecret: string;
-  walletId?: string;
-  address?: string;
-}
-
-export interface CrossmintConfig {
-  type: "crossmint";
-  apiKey: string;
-  walletId?: string;
+  walletSecret: string;
+  accountName?: string;
   address?: string;
 }
 
@@ -56,6 +41,7 @@ export interface BrowserWalletConfig {
  */
 export interface WalletAdapter {
   readonly type: AdapterType;
+  readonly canSignServerSide: boolean;
 
   /** Create or provision a new wallet. Returns the wallet address. */
   createWallet(): Promise<Address>;

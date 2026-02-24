@@ -41,7 +41,7 @@ function networkShort(net: string): string {
   return net;
 }
 
-type StatusFilter = "all" | "settled" | "pending" | "failed";
+type StatusFilter = "all" | "settled" | "settling" | "pending" | "failed";
 
 interface TransactionsProps {
   transactions: TransactionRecord[];
@@ -105,6 +105,7 @@ export default function Transactions({
             <SelectContent>
               <SelectItem value="all">All Status</SelectItem>
               <SelectItem value="settled">Settled</SelectItem>
+              <SelectItem value="settling">Settling</SelectItem>
               <SelectItem value="pending">Pending</SelectItem>
               <SelectItem value="failed">Failed</SelectItem>
             </SelectContent>
@@ -193,10 +194,13 @@ export default function Transactions({
                       <td className="px-4 py-3 whitespace-nowrap">
                         <span className="inline-flex items-center gap-1.5">
                           {tx.status === "settled" && <CheckCircle2 className="h-3 w-3 text-[#111111]" />}
+                          {tx.status === "settling" && <RefreshCw className="h-3 w-3 text-[#888888] animate-spin" />}
                           {tx.status === "pending" && <Clock className="h-3 w-3 text-[#888888]" />}
                           {tx.status === "failed" && <XCircle className="h-3 w-3 text-[#888888]" />}
                           <span className={`text-xs font-medium ${tx.status === "settled" ? "text-[#111111]" : "text-[#888888]"}`}>
-                            {tx.status}
+                            {tx.status === "settling" ? (
+                              <span>{tx.confirmations ?? 0}/{isTestnetNetwork(tx.network) ? 3 : 12} confirmations</span>
+                            ) : tx.status}
                           </span>
                         </span>
                       </td>
@@ -222,6 +226,17 @@ export default function Transactions({
                         )}
                       </td>
                     </tr>
+                    {tx.status === "settling" && tx.settlementFlags && (Object.keys(tx.settlementFlags).length > 0) && (
+                      <tr key={`${tx.id}-flags`} className="border-b border-[#F0F0F0]">
+                        <td colSpan={7} className="px-4 py-2 bg-white">
+                          <span className="inline-flex items-center gap-1.5 text-[11px] text-[#888888]">
+                            <AlertCircle className="h-3 w-3 shrink-0" />
+                            {tx.settlementFlags.missingTxHash && "No txHash returned by server"}
+                            {tx.settlementFlags.reorgDetected && "Chain reorg detected — re-confirming"}
+                          </span>
+                        </td>
+                      </tr>
+                    )}
                     {tx.status === "failed" && tx.reason && (
                       <tr key={`${tx.id}-reason`} className="border-b border-[#F0F0F0]">
                         <td colSpan={7} className="px-4 py-2 bg-white">
@@ -259,9 +274,12 @@ export default function Transactions({
                       <span className="font-mono text-sm font-semibold">{tx.amount} <span className="text-xs font-normal text-[#888888]">USDC</span></span>
                       <span className="inline-flex items-center gap-1">
                         {tx.status === "settled" && <CheckCircle2 className="h-3 w-3 text-[#111111]" />}
+                        {tx.status === "settling" && <RefreshCw className="h-3 w-3 text-[#888888] animate-spin" />}
                         {tx.status === "pending" && <Clock className="h-3 w-3 text-[#888888]" />}
                         {tx.status === "failed" && <XCircle className="h-3 w-3 text-[#888888]" />}
-                        <span className={`text-xs font-medium ${tx.status === "settled" ? "text-[#111111]" : "text-[#888888]"}`}>{tx.status}</span>
+                        <span className={`text-xs font-medium ${tx.status === "settled" ? "text-[#111111]" : "text-[#888888]"}`}>
+                          {tx.status === "settling" ? `${tx.confirmations ?? 0}/${isTestnetNetwork(tx.network) ? 3 : 12}` : tx.status}
+                        </span>
                       </span>
                     </div>
                   </button>
@@ -295,6 +313,13 @@ export default function Transactions({
                             {truncate(tx.txHash, 8)}
                             <ExternalLink className="h-3 w-3 opacity-40" />
                           </a>
+                        </div>
+                      )}
+                      {tx.status === "settling" && tx.settlementFlags && Object.keys(tx.settlementFlags).length > 0 && (
+                        <div className="flex items-center gap-1.5 text-xs text-[#888888]">
+                          <AlertCircle className="h-3 w-3" />
+                          {tx.settlementFlags.missingTxHash && "No txHash returned by server"}
+                          {tx.settlementFlags.reorgDetected && "Chain reorg detected — re-confirming"}
                         </div>
                       )}
                       {tx.status === "failed" && tx.reason && (

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { api } from "../api";
+import { api, UnauthorizedError } from "../api";
 import type { WalletInfo, SpendingRules, TransactionRecord, WalletSummary, NetworkId, AgentIdentity } from "../types";
 
 // Base chain IDs for MetaMask
@@ -12,6 +12,8 @@ const CHAIN_ID_TO_NETWORK: Record<string, NetworkId> = {
   "0x2105": "base",
   "0x14a34": "base-sepolia",
 };
+
+const STORAGE_KEY = "clawlet_active_wallet_id";
 
 /** Ask MetaMask to switch chains. Silently fails if MetaMask is unavailable. */
 async function switchMetaMaskChain(net: NetworkId): Promise<void> {
@@ -47,6 +49,7 @@ export function useClawlet() {
   const [walletId, setWalletId] = useState<string | null>(null);
   const [walletLabel, setWalletLabel] = useState<string | null>(null);
   const [adapterType, setAdapterType] = useState<string | null>(null);
+  const [canSignServerSide, setCanSignServerSide] = useState(true);
   const [wallets, setWallets] = useState<WalletSummary[]>([]);
   const [balance, setBalance] = useState("—");
   const [rules, setRules] = useState<SpendingRules | null>(null);
@@ -55,55 +58,123 @@ export function useClawlet() {
   const [network, setNetworkState] = useState<NetworkId>("base");
   const [agentIdentity, setAgentIdentityState] = useState<AgentIdentity | null>(null);
   const [demoMode, setDemoMode] = useState(false);
+  const [needsAuth, setNeedsAuth] = useState(false);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const refreshCount = useRef(0);
 
-  // Fetch demo mode flag once on mount
+  // Fetch config (demo mode + auth) on mount
   useEffect(() => {
-    api<{ demoMode: boolean }>("/api/config")
-      .then((cfg) => setDemoMode(cfg.demoMode))
+    api<{ demoMode: boolean; authRequired?: boolean }>("/api/config")
+      .then((cfg) => {
+        setDemoMode(cfg.demoMode);
+        // If auth is required but no key stored, flag it
+        if (cfg.authRequired && !localStorage.getItem("clawlet_api_key")) {
+          setNeedsAuth(true);
+        }
+      })
       .catch(() => {});
   }, []);
 
+  const setApiKey = useCallback((key: string) => {
+    localStorage.setItem("clawlet_api_key", key);
+    setNeedsAuth(false);
+  }, []);
+
   const refresh = useCallback(async () => {
-    const results = await Promise.allSettled([
-      api<{ wallet: WalletInfo | null; adapter: string | null; id?: string; label?: string }>("/api/wallet"),
-      api<{ balance: string }>("/api/balance"),
-      api<SpendingRules>("/api/rules"),
-      api<{ transactions: TransactionRecord[] }>("/api/transactions?limit=50"),
-      api<{ spent: string }>("/api/today-spent"),
-      api<{ wallets: WalletSummary[]; activeWalletId: string | null }>("/api/wallets"),
+    // Stage 1: Fetch wallet list + global data
+    const [walletsResult, networkResult, configResult] = await Promise.allSettled([
+      api<{ wallets: WalletSummary[] }>("/api/wallets"),
       api<{ network: NetworkId }>("/api/network"),
-      api<{ identity: AgentIdentity | null }>("/api/agent-identity"),
+      api<{ demoMode: boolean; authRequired?: boolean }>("/api/config"),
     ]);
 
-    if (results[0].status === "fulfilled") {
-      setWallet(results[0].value.wallet);
-      setAdapterType(results[0].value.adapter);
-      setWalletId(results[0].value.id ?? null);
-      setWalletLabel(results[0].value.label ?? null);
+    // Check for 401
+    const has401 = [walletsResult, networkResult, configResult].some(
+      (r) => r.status === "rejected" && r.reason instanceof UnauthorizedError,
+    );
+    if (has401) {
+      setNeedsAuth(true);
+      setLoading(false);
+      return;
     }
-    if (results[1].status === "fulfilled") {
-      setBalance(results[1].value.balance);
+
+    let walletList: WalletSummary[] = [];
+    if (walletsResult.status === "fulfilled") {
+      walletList = walletsResult.value.wallets;
+      setWallets(walletList);
     }
-    if (results[2].status === "fulfilled") {
-      setRules(results[2].value);
+    if (networkResult.status === "fulfilled") {
+      setNetworkState(networkResult.value.network);
     }
-    if (results[3].status === "fulfilled") {
-      setTransactions(results[3].value.transactions || []);
+
+    // Stage 2: Resolve active wallet ID
+    let activeId: string | null = null;
+    if (walletList.length > 0) {
+      const storedId = localStorage.getItem(STORAGE_KEY);
+      const found = storedId && walletList.some((w) => w.id === storedId);
+      activeId = found ? storedId : walletList[0].id;
+
+      // Persist resolved ID
+      if (activeId !== storedId) {
+        localStorage.setItem(STORAGE_KEY, activeId);
+      }
+    } else {
+      localStorage.removeItem(STORAGE_KEY);
     }
-    if (results[4].status === "fulfilled") {
-      setTodaySpent(results[4].value.spent);
+
+    setWalletId(activeId);
+
+    // If no wallets, clear everything
+    if (!activeId) {
+      setWallet(null);
+      setWalletLabel(null);
+      setAdapterType(null);
+      setBalance("—");
+      setRules(null);
+      setTransactions([]);
+      setTodaySpent("0.0");
+      setAgentIdentityState(null);
+      setLastUpdated(new Date());
+      refreshCount.current += 1;
+      setLoading(false);
+      return;
     }
-    if (results[5].status === "fulfilled") {
-      setWallets(results[5].value.wallets);
+
+    // Set wallet metadata from the list
+    const activeWallet = walletList.find((w) => w.id === activeId)!;
+    setWalletLabel(activeWallet.label);
+    setAdapterType(activeWallet.adapter);
+    setCanSignServerSide(activeWallet.canSignServerSide ?? activeWallet.adapter !== "browser");
+    setWallet({
+      address: activeWallet.address,
+      createdAt: activeWallet.createdAt,
+      frozen: activeWallet.frozen,
+    });
+
+    // Stage 3: Fetch wallet-scoped data
+    const [balanceResult, rulesResult, txResult, spentResult, identityResult] = await Promise.allSettled([
+      api<{ balance: string }>(`/api/wallets/${activeId}/balance`),
+      api<SpendingRules>(`/api/wallets/${activeId}/rules`),
+      api<{ transactions: TransactionRecord[] }>(`/api/wallets/${activeId}/transactions?limit=50`),
+      api<{ spent: string }>(`/api/wallets/${activeId}/today-spent`),
+      api<{ identity: AgentIdentity | null }>(`/api/wallets/${activeId}/agent-identity`),
+    ]);
+
+    if (balanceResult.status === "fulfilled") {
+      setBalance(balanceResult.value.balance);
     }
-    if (results[6].status === "fulfilled") {
-      setNetworkState(results[6].value.network);
+    if (rulesResult.status === "fulfilled") {
+      setRules(rulesResult.value);
     }
-    if (results[7].status === "fulfilled") {
-      setAgentIdentityState(results[7].value.identity);
+    if (txResult.status === "fulfilled") {
+      setTransactions(txResult.value.transactions || []);
+    }
+    if (spentResult.status === "fulfilled") {
+      setTodaySpent(spentResult.value.spent);
+    }
+    if (identityResult.status === "fulfilled") {
+      setAgentIdentityState(identityResult.value.identity);
     }
 
     setLastUpdated(new Date());
@@ -148,17 +219,20 @@ export function useClawlet() {
   }, [refresh]);
 
   const freeze = async () => {
-    await api("/api/freeze", { method: "POST" });
+    if (!walletId) return;
+    await api(`/api/wallets/${walletId}/freeze`, { method: "POST" });
     setWallet((prev) => (prev ? { ...prev, frozen: true } : null));
   };
 
   const unfreeze = async () => {
-    await api("/api/unfreeze", { method: "POST" });
+    if (!walletId) return;
+    await api(`/api/wallets/${walletId}/unfreeze`, { method: "POST" });
     setWallet((prev) => (prev ? { ...prev, frozen: false } : null));
   };
 
   const saveRules = async (newRules: SpendingRules) => {
-    const updated = await api<SpendingRules>("/api/rules", {
+    if (!walletId) return;
+    const updated = await api<SpendingRules>(`/api/wallets/${walletId}/rules`, {
       method: "PUT",
       body: JSON.stringify(newRules),
     });
@@ -170,18 +244,19 @@ export function useClawlet() {
     credentials?: Record<string, string>,
     label?: string,
   ) => {
-    await api("/api/wallets", {
+    const result = await api<{ id: string }>("/api/wallets", {
       method: "POST",
       body: JSON.stringify({ adapter, credentials, label }),
     });
+    // Make the new wallet active
+    localStorage.setItem(STORAGE_KEY, result.id);
     await refresh();
   };
 
   const switchWalletFn = async (targetWalletId: string) => {
-    await api("/api/wallets/switch", {
-      method: "POST",
-      body: JSON.stringify({ walletId: targetWalletId }),
-    });
+    // Pure client-side switch — no server call
+    setWalletId(targetWalletId);
+    localStorage.setItem(STORAGE_KEY, targetWalletId);
     await refresh();
   };
 
@@ -198,11 +273,16 @@ export function useClawlet() {
 
   const removeWalletFn = async (targetWalletId: string) => {
     await api(`/api/wallets/${targetWalletId}`, { method: "DELETE" });
+    // If removed was active, clear localStorage so refresh picks the first wallet
+    if (targetWalletId === walletId) {
+      localStorage.removeItem(STORAGE_KEY);
+    }
     await refresh();
   };
 
   const renameWalletFn = async (label: string) => {
-    await api("/api/wallets/rename", {
+    if (!walletId) return;
+    await api(`/api/wallets/${walletId}/rename`, {
       method: "POST",
       body: JSON.stringify({ label }),
     });
@@ -210,7 +290,8 @@ export function useClawlet() {
   };
 
   const saveAgentIdentity = async (identity: Partial<AgentIdentity>) => {
-    const result = await api<{ identity: AgentIdentity }>("/api/agent-identity", {
+    if (!walletId) return;
+    const result = await api<{ identity: AgentIdentity }>(`/api/wallets/${walletId}/agent-identity`, {
       method: "POST",
       body: JSON.stringify(identity),
     });
@@ -239,14 +320,16 @@ export function useClawlet() {
   }
 
   const preparePayment = async (url: string, method = "GET"): Promise<PrepareResult> => {
-    return api<PrepareResult>("/api/pay/prepare", {
+    if (!walletId) throw new Error("No wallet selected");
+    return api<PrepareResult>(`/api/wallets/${walletId}/pay/prepare`, {
       method: "POST",
       body: JSON.stringify({ url, method }),
     });
   };
 
   const completePayment = async (sessionId: string, signature: string): Promise<PayResult> => {
-    const result = await api<PayResult>("/api/pay/complete", {
+    if (!walletId) throw new Error("No wallet selected");
+    const result = await api<PayResult>(`/api/wallets/${walletId}/pay/complete`, {
       method: "POST",
       body: JSON.stringify({ sessionId, signature }),
     });
@@ -255,9 +338,11 @@ export function useClawlet() {
   };
 
   const testPayment = async (url: string, method = "GET"): Promise<PayResult> => {
-    // Non-browser adapters use the single-step flow
-    if (adapterType !== "browser") {
-      const result = await api<PayResult>("/api/pay", {
+    if (!walletId) throw new Error("No wallet selected");
+
+    // Server-side signers use the single-step flow
+    if (canSignServerSide) {
+      const result = await api<PayResult>(`/api/wallets/${walletId}/pay`, {
         method: "POST",
         body: JSON.stringify({ url, method }),
       });
@@ -330,11 +415,14 @@ export function useClawlet() {
 
   return {
     demoMode,
+    needsAuth,
+    setApiKey,
     loading,
     wallet,
     walletId,
     walletLabel,
     adapterType,
+    canSignServerSide,
     wallets,
     balance,
     rules,

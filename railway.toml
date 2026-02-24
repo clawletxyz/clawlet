@@ -1,9 +1,9 @@
 [build]
-buildCommand = "npm run build:all"
+buildCommand = "npm run build"
 
 [build.nixpacks]
 nodeVersion = "20"
 
 [deploy]
-startCommand = "node dist/demo/start.js"
-healthcheckPath = "/api/wallet"
+startCommand = "node dist/api.js"
+healthcheckPath = "/api/config"

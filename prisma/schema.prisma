@@ -1,0 +1,134 @@
+datasource db {
+  provider = "sqlite"
+}
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+model AppState {
+  id      String @id @default("singleton")
+  network String @default("base")
+}
+
+model Wallet {
+  id            String   @id
+  label         String
+  address       String
+  createdAt     DateTime
+  frozen        Boolean  @default(false)
+  adapterType   String
+  adapterConfig String // JSON blob for adapter credentials
+
+  // Spending rules (flattened 1:1)
+  maxPerTransaction    String?
+  dailyCap             String?
+  requireApprovalAbove String? // Payments above this USDC amount require human approval
+  allowedServices      String  @default("[]") // JSON array
+  blockedServices      String  @default("[]") // JSON array
+
+  // Agent identity (optional, flattened)
+  agentName        String?
+  agentDescription String?
+  agentId          String?
+  agentRegistry    String?
+  agentURI         String?
+
+  tags String @default("{}") // JSON object: Record<string, string>
+
+  transactions      Transaction[]
+  sessions          PaymentSession[]
+  approvalRequests  ApprovalRequest[]
+  autoApprovePolicy AutoApprovePolicy?
+}
+
+model Transaction {
+  id             String   @id
+  walletId       String
+  timestamp      DateTime @default(now())
+  to             String
+  service        String
+  amount         String
+  asset          String
+  network        String
+  txHash         String?
+  status         String   @default("pending")
+  reason         String
+  idempotencyKey String?  @unique
+
+  confirmations    Int       @default(0)
+  confirmedAt      DateTime?
+  lastCheckedBlock Int?
+  settlementFlags  String    @default("{}")
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId, timestamp])
+  @@index([walletId, status])
+  @@index([status])
+}
+
+model PaymentSession {
+  id              String   @id
+  walletId        String
+  url             String
+  method          String
+  headers         String // JSON
+  body            String?
+  reason          String
+  accepted        String // JSON (PaymentRequirements)
+  paymentRequired String // JSON (PaymentRequired)
+  authorization   String // JSON
+  txRecordId      String
+  expiresAt       Int // Unix seconds
+  createdAt       DateTime @default(now())
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+}
+
+model ApprovalRequest {
+  id             String    @id
+  walletId       String
+  agentName      String? // from wallet agent identity at time of request
+  url            String // target endpoint
+  method         String    @default("GET")
+  amount         String // requested payment amount (human-readable USDC)
+  asset          String
+  network        String
+  reason         String // purpose provided by agent
+  ruleTriggered  String // "amount_threshold" | "new_endpoint"
+  status         String    @default("pending") // "pending" | "approved" | "rejected" | "expired"
+  decidedBy      String? // who approved/rejected
+  decidedAt      DateTime?
+  expiresAt      DateTime // 15 min TTL from creation
+  createdAt      DateTime  @default(now())
+
+  // Store x402 negotiation context so we can resume payment on approval
+  requestHeaders  String  @default("{}") // JSON — original request headers
+  requestBody     String? // original request body
+  accepted        String // JSON (PaymentRequirements from 402 response)
+  paymentRequired String // JSON (PaymentRequired from 402 response)
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([walletId, status])
+  @@index([expiresAt])
+}
+
+model AutoApprovePolicy {
+  id             String  @id @default(cuid())
+  walletId       String  @unique
+  enabled        Boolean @default(true)
+
+  // AND conditions — ALL non-null conditions must pass
+  maxAmount      String? // Max USDC per tx for auto-approve
+  maxDailyCount  Int?    // Max auto-approved txs per day
+  maxDailyAmount String? // Max cumulative daily USDC
+  servicePattern String? // Glob pattern (e.g. "*.example.com")
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+}

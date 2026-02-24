@@ -25,13 +25,13 @@ interface QuickPaymentProps {
   }>;
   frozen: boolean;
   network: NetworkId;
-  adapterType: string | null;
+  canSignServerSide: boolean;
   showToast: (msg: string, type?: "success" | "error" | "info") => void;
 }
 
-export default function QuickPayment({ onPay, frozen, network, adapterType, showToast }: QuickPaymentProps) {
+export default function QuickPayment({ onPay, frozen, network, canSignServerSide, showToast }: QuickPaymentProps) {
   const isTestnet = network === "base-sepolia";
-  const isBrowser = adapterType === "browser";
+  const isBrowser = !canSignServerSide;
   const [url, setUrl] = useState("");
   const [method, setMethod] = useState("GET");
   const [loading, setLoading] = useState(false);

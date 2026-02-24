@@ -20,8 +20,11 @@ export interface TransactionRecord {
   asset: string;
   network: string;
   txHash: string | null;
-  status: "pending" | "settled" | "failed";
+  status: "pending" | "settling" | "settled" | "failed";
   reason: string;
+  confirmations?: number;
+  confirmedAt?: string | null;
+  settlementFlags?: Record<string, boolean>;
 }
 
 export interface AgentIdentity {
@@ -38,9 +41,12 @@ export interface WalletSummary {
   address: string;
   frozen: boolean;
   adapter: string;
+  canSignServerSide?: boolean;
   createdAt: string;
   agentIdentity: AgentIdentity | null;
+  tags: Record<string, string>;
   x402scanUrl: string;
+  network?: NetworkId;
 }
 
 export type NetworkId = "base" | "base-sepolia";
